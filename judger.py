@@ -286,12 +286,30 @@ def pair_test_files(file_paths):
 
 import queue
 
+BG = "#f0f2f5"
+CARD = "#ffffff"
+BORDER = "#d0d5dd"
+PRIMARY = "#3b82f6"
+PRIMARY_HOVER = "#2563eb"
+TEXT_PRIMARY = "#1f2937"
+TEXT_SECONDARY = "#6b7280"
+TEXT_MUTED = "#9ca3af"
+ACCENT_GREEN = "#16a34a"
+ACCENT_RED = "#dc2626"
+ACCENT_ORANGE = "#ea580c"
+ACCENT_PURPLE = "#9333ea"
+ACCENT_BLUE = "#2563eb"
+RESULT_BG = "#1e1e2e"
+RESULT_FG = "#cdd6f4"
+
 
 class JudgerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("C++ 测评器")
-        self.root.geometry("900x700")
+        self.root.title("C++ Judger")
+        self.root.geometry("960x720")
+        self.root.minsize(800, 600)
+        self.root.configure(bg=BG)
 
         self.cpp_path = tk.StringVar(value="未选择")
         self.test_files = []
@@ -304,73 +322,173 @@ class JudgerApp:
         self.queue = queue.Queue()
         self.running = False
 
+        self._setup_style()
         self._build_ui()
         self.root.after(100, self._process_queue)
 
+    def _setup_style(self):
+        self.style = ttk.Style()
+        try:
+            self.style.theme_use("vista")
+        except Exception:
+            try:
+                self.style.theme_use("clam")
+            except Exception:
+                pass
+
+        self.style.configure(".", background=BG, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10))
+        self.style.configure("TFrame", background=BG)
+        self.style.configure("Card.TFrame", background=CARD)
+        self.style.configure("TLabel", background=BG, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10))
+        self.style.configure("Card.TLabel", background=CARD, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10))
+        self.style.configure("Dim.TLabel", background=BG, foreground=TEXT_SECONDARY, font=("Microsoft YaHei UI", 9))
+        self.style.configure("CardDim.TLabel", background=CARD, foreground=TEXT_SECONDARY, font=("Microsoft YaHei UI", 9))
+        self.style.configure("Title.TLabel", background=BG, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 16, "bold"))
+        self.style.configure("Section.TLabel", background=CARD, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 11, "bold"))
+        self.style.configure("Path.TLabel", background=CARD, foreground=TEXT_SECONDARY, font=("Consolas", 9))
+
+        self.style.configure("Primary.TButton", font=("Microsoft YaHei UI", 11, "bold"), padding=(20, 8))
+        self.style.map("Primary.TButton",
+                        background=[("active", PRIMARY_HOVER), ("!active", PRIMARY)],
+                        foreground=[("active", "white"), ("!active", "white")])
+        self.style.configure("Secondary.TButton", font=("Microsoft YaHei UI", 10), padding=(12, 6))
+        self.style.configure("Small.TButton", font=("Microsoft YaHei UI", 9), padding=(8, 4))
+
+        self.style.configure("Card.TLabelframe", background=CARD, bordercolor=BORDER, relief="solid", borderwidth=1)
+        self.style.configure("Card.TLabelframe.Label", background=CARD, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 11, "bold"))
+
+        self.style.configure("TEntry", padding=(8, 6), fieldbackground=CARD)
+        self.style.configure("TCombobox", padding=(8, 6))
+
     def _build_ui(self):
-        pad = {"padx": 6, "pady": 4}
+        main = ttk.Frame(self.root)
+        main.pack(fill="both", expand=True, padx=16, pady=12)
 
-        top = ttk.LabelFrame(self.root, text="文件选择")
-        top.pack(fill="x", padx=8, pady=6)
+        header = ttk.Frame(main)
+        header.pack(fill="x", pady=(0, 12))
+        ttk.Label(header, text="C++ Judger", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text="  本地测评工具", style="Dim.TLabel").pack(side="left", padx=(4, 0), pady=(6, 0))
 
-        row = 0
-        ttk.Label(top, text="C++ 源文件:").grid(row=row, column=0, sticky="w", **pad)
-        ttk.Label(top, textvariable=self.cpp_path, width=50, anchor="w").grid(row=row, column=1, sticky="w", **pad)
-        ttk.Button(top, text="选择…", command=self.choose_cpp).grid(row=row, column=2, **pad)
+        self._build_file_card(main)
+        self._build_option_card(main)
+        self._build_action_bar(main)
+        self._build_result_card(main)
 
-        row += 1
-        ttk.Label(top, text="测评点文件:").grid(row=row, column=0, sticky="nw", **pad)
-        list_frame = ttk.Frame(top)
-        list_frame.grid(row=row, column=1, sticky="we", **pad)
-        self.file_listbox = tk.Listbox(list_frame, height=6, selectmode=tk.EXTENDED)
+    def _card_frame(self, parent, title):
+        outer = ttk.Frame(parent, style="Card.TFrame")
+        title_bar = ttk.Frame(outer, style="Card.TFrame")
+        title_bar.pack(fill="x", padx=16, pady=(12, 0))
+        ttk.Label(title_bar, text=title, style="Section.TLabel").pack(side="left")
+        body = ttk.Frame(outer, style="Card.TFrame")
+        body.pack(fill="x", padx=16, pady=(8, 12))
+        return outer, body
+
+    def _build_file_card(self, parent):
+        card, body = self._card_frame(parent, "文件选择")
+        card.pack(fill="x", pady=(0, 8))
+
+        row1 = ttk.Frame(body, style="Card.TFrame")
+        row1.pack(fill="x", pady=(0, 8))
+        ttk.Label(row1, text="源文件", style="Card.TLabel", width=8).pack(side="left")
+        self.cpp_label = ttk.Label(row1, textvariable=self.cpp_path, style="Path.TLabel")
+        self.cpp_label.pack(side="left", fill="x", expand=True, padx=(8, 8))
+        ttk.Button(row1, text="选择", style="Small.TButton", command=self.choose_cpp).pack(side="right")
+
+        sep = ttk.Frame(body, style="Card.TFrame", height=1)
+        sep.pack(fill="x", pady=(0, 8))
+
+        row2 = ttk.Frame(body, style="Card.TFrame")
+        row2.pack(fill="x")
+        ttk.Label(row2, text="测评点", style="Card.TLabel", width=8).pack(side="left", anchor="n", pady=(4, 0))
+
+        list_wrap = ttk.Frame(row2, style="Card.TFrame")
+        list_wrap.pack(side="left", fill="both", expand=True, padx=(8, 8))
+        self.file_listbox = tk.Listbox(
+            list_wrap, height=5, selectmode=tk.EXTENDED,
+            font=("Consolas", 9), bg="#f8f9fa", fg=TEXT_PRIMARY,
+            selectbackground=PRIMARY, selectforeground="white",
+            relief="solid", borderwidth=1, highlightthickness=0,
+            activestyle="none"
+        )
         self.file_listbox.pack(side="left", fill="both", expand=True)
-        sb = ttk.Scrollbar(list_frame, orient="vertical", command=self.file_listbox.yview)
+        sb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.file_listbox.yview)
         sb.pack(side="right", fill="y")
         self.file_listbox.config(yscrollcommand=sb.set)
-        btn_frame = ttk.Frame(top)
-        btn_frame.grid(row=row, column=2, sticky="n", **pad)
-        ttk.Button(btn_frame, text="选择…", command=self.choose_tests).pack(pady=2)
-        ttk.Button(btn_frame, text="清空", command=self.clear_tests).pack(pady=2)
 
-        mid = ttk.LabelFrame(self.root, text="限制与选项")
-        mid.pack(fill="x", padx=8, pady=6)
+        btn_col = ttk.Frame(row2, style="Card.TFrame")
+        btn_col.pack(side="right", anchor="n")
+        ttk.Button(btn_col, text="选择", style="Small.TButton", command=self.choose_tests).pack(pady=(0, 4))
+        ttk.Button(btn_col, text="清空", style="Small.TButton", command=self.clear_tests).pack()
 
-        ttk.Label(mid, text="时间限制 (ms):").grid(row=0, column=0, sticky="w", **pad)
-        ttk.Entry(mid, textvariable=self.time_limit, width=10).grid(row=0, column=1, sticky="w", **pad)
-        ttk.Label(mid, text="空间限制 (MB):").grid(row=0, column=2, sticky="w", **pad)
-        ttk.Entry(mid, textvariable=self.mem_limit, width=10).grid(row=0, column=3, sticky="w", **pad)
-        ttk.Label(mid, text="C++ 版本:").grid(row=0, column=4, sticky="w", **pad)
-        ttk.Combobox(mid, textvariable=self.std_var, values=["C++11", "C++14", "C++23"],
-                     width=8, state="readonly").grid(row=0, column=5, sticky="w", **pad)
-        ttk.Label(mid, text="编译器:").grid(row=1, column=0, sticky="w", **pad)
-        ttk.Entry(mid, textvariable=self.gpp_path, width=40).grid(row=1, column=1, columnspan=3, sticky="we", **pad)
-        ttk.Button(mid, text="浏览…", command=self.choose_gpp).grid(row=1, column=4, **pad)
+    def _build_option_card(self, parent):
+        card, body = self._card_frame(parent, "评测选项")
+        card.pack(fill="x", pady=(0, 8))
 
-        action = ttk.Frame(self.root)
-        action.pack(fill="x", padx=8, pady=6)
-        self.start_btn = ttk.Button(action, text="开始评测", command=self.start_judge)
+        row1 = ttk.Frame(body, style="Card.TFrame")
+        row1.pack(fill="x", pady=(0, 8))
+
+        for label_text, var, width in [("时间限制", self.time_limit, 8), ("空间限制", self.mem_limit, 8)]:
+            ttk.Label(row1, text=label_text, style="Card.TLabel").pack(side="left", padx=(0, 4))
+            entry = ttk.Entry(row1, textvariable=var, width=width, font=("Consolas", 10))
+            entry.pack(side="left", padx=(0, 4))
+            unit = "ms" if "时间" in label_text else "MB"
+            ttk.Label(row1, text=unit, style="CardDim.TLabel").pack(side="left", padx=(0, 20))
+
+        ttk.Label(row1, text="C++ 版本", style="Card.TLabel").pack(side="left", padx=(0, 4))
+        cb = ttk.Combobox(row1, textvariable=self.std_var, values=["C++11", "C++14", "C++23"],
+                          width=8, state="readonly", font=("Consolas", 10))
+        cb.pack(side="left")
+
+        row2 = ttk.Frame(body, style="Card.TFrame")
+        row2.pack(fill="x")
+        ttk.Label(row2, text="编译器", style="Card.TLabel").pack(side="left", padx=(0, 4))
+        gpp_entry = ttk.Entry(row2, textvariable=self.gpp_path, font=("Consolas", 9))
+        gpp_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Button(row2, text="浏览", style="Small.TButton", command=self.choose_gpp).pack(side="right")
+
+    def _build_action_bar(self, parent):
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", pady=(0, 8))
+        self.start_btn = ttk.Button(bar, text="开始评测", style="Primary.TButton", command=self.start_judge)
         self.start_btn.pack(side="left")
-        ttk.Button(action, text="清空结果", command=self.clear_result).pack(side="left", padx=8)
+        ttk.Button(bar, text="清空结果", style="Secondary.TButton", command=self.clear_result).pack(side="left", padx=(12, 0))
+        self.status_label = ttk.Label(bar, text="", style="Dim.TLabel")
+        self.status_label.pack(side="right", padx=(8, 0))
 
-        result_frame = ttk.LabelFrame(self.root, text="评测结果")
-        result_frame.pack(fill="both", expand=True, padx=8, pady=6)
-        self.result_text = tk.Text(result_frame, wrap="none", font=("Consolas", 10), state="disabled")
-        sb_y = ttk.Scrollbar(result_frame, orient="vertical", command=self.result_text.yview)
-        sb_x = ttk.Scrollbar(result_frame, orient="horizontal", command=self.result_text.xview)
+    def _build_result_card(self, parent):
+        card = ttk.Frame(parent, style="Card.TFrame")
+        card.pack(fill="both", expand=True)
+
+        title_bar = ttk.Frame(card, style="Card.TFrame")
+        title_bar.pack(fill="x", padx=16, pady=(12, 0))
+        ttk.Label(title_bar, text="评测结果", style="Section.TLabel").pack(side="left")
+
+        result_wrap = ttk.Frame(card, style="Card.TFrame")
+        result_wrap.pack(fill="both", expand=True, padx=16, pady=(8, 12))
+
+        self.result_text = tk.Text(
+            result_wrap, wrap="none", font=("Consolas", 10),
+            bg=RESULT_BG, fg=RESULT_FG, insertbackground=RESULT_FG,
+            selectbackground="#45475a", selectforeground=RESULT_FG,
+            relief="solid", borderwidth=1, highlightthickness=0,
+            padx=12, pady=8, state="disabled", cursor="arrow"
+        )
+        sb_y = ttk.Scrollbar(result_wrap, orient="vertical", command=self.result_text.yview)
+        sb_x = ttk.Scrollbar(result_wrap, orient="horizontal", command=self.result_text.xview)
         self.result_text.configure(yscrollcommand=sb_y.set, xscrollcommand=sb_x.set)
-        sb_y.pack(side="right", fill="y")
         sb_x.pack(side="bottom", fill="x")
+        sb_y.pack(side="right", fill="y")
         self.result_text.pack(fill="both", expand=True)
 
-        self.result_text.tag_configure("ac", foreground="#2e8b57")
-        self.result_text.tag_configure("wa", foreground="#c0392b")
-        self.result_text.tag_configure("tle", foreground="#d35400")
-        self.result_text.tag_configure("mle", foreground="#8e44ad")
-        self.result_text.tag_configure("re", foreground="#c0392b")
-        self.result_text.tag_configure("ce", foreground="#c0392b")
-        self.result_text.tag_configure("header", foreground="#1a5276", font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("info", foreground="#34495e")
-        self.result_text.tag_configure("muted", foreground="#7f8c8d")
+        self.result_text.tag_configure("ac", foreground="#a6e3a1", font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("wa", foreground="#f38ba8", font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("tle", foreground="#fab387", font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("mle", foreground="#cba6f7", font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("re", foreground="#f38ba8", font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("ce", foreground="#f38ba8", font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("header", foreground="#89b4fa", font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("info", foreground="#a6adc8")
+        self.result_text.tag_configure("muted", foreground="#6c7086")
 
     # ---------- 文件选择 ----------
     def choose_cpp(self):
@@ -439,6 +557,7 @@ class JudgerApp:
 
         self.running = True
         self.start_btn.config(state="disabled")
+        self.status_label.config(text="评测中…")
         self.clear_result()
         threading.Thread(
             target=self._judge_worker,
@@ -538,6 +657,7 @@ class JudgerApp:
             self.result_text.insert("end", f"评测完成：{passed}/{total} 通过\n", tag)
             self.running = False
             self.start_btn.config(state="normal")
+            self.status_label.config(text=f"完成  {passed}/{total} 通过")
         else:
             text = msg[1]
             tag = kind if kind in ("ac", "wa", "tle", "mle", "re", "ce", "header", "info", "muted") else "info"
