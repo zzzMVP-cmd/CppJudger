@@ -405,10 +405,12 @@ class JudgerApp:
         sb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.file_listbox.yview)
         sb.pack(side="right", fill="y")
         self.file_listbox.config(yscrollcommand=sb.set)
+        self.file_listbox.bind("<ButtonRelease-1>", self._toggle_listbox_selection)
 
         btn_col = ttk.Frame(row2, style="Card.TFrame")
         btn_col.pack(side="right", anchor="n")
-        ttk.Button(btn_col, text="选择", style="Small.TButton", command=self.choose_tests).pack(pady=(0, 4))
+        ttk.Button(btn_col, text="添加", style="Small.TButton", command=self.choose_tests).pack(pady=(0, 4))
+        ttk.Button(btn_col, text="删除", style="Small.TButton", command=self.delete_tests).pack(pady=(0, 4))
         ttk.Button(btn_col, text="清空", style="Small.TButton", command=self.clear_tests).pack()
 
     def _build_option_card(self, parent):
@@ -497,18 +499,47 @@ class JudgerApp:
 
     def choose_tests(self):
         ps = filedialog.askopenfilenames(
-            title="选择测评点文件（输入与预期输出，可多选）",
+            title="添加测评点文件（输入与预期输出，可多选）",
             filetypes=[("测评点文件", "*.in *.out *.ans"), ("所有文件", "*.*")]
         )
         if ps:
-            self.test_files = list(ps)
+            existing = set(self.test_files)
+            new_files = [p for p in ps if p not in existing]
+            self.test_files.extend(new_files)
             self.pairs = pair_test_files(self.test_files)
-            self.file_listbox.delete(0, tk.END)
-            for inp, outp, name in self.pairs:
-                self.file_listbox.insert(tk.END, f"{name}  (in: {os.path.basename(inp)} | out: {os.path.basename(outp)})")
-            unpaired = len(self.test_files) - len(self.pairs) * 2
-            if unpaired > 0:
-                self.file_listbox.insert(tk.END, f"[警告] {unpaired} 个文件未能配对")
+            self._refresh_listbox()
+
+    def delete_tests(self):
+        sel = self.file_listbox.curselection()
+        if not sel:
+            return
+        indices = sorted(sel, reverse=True)
+        for idx in indices:
+            if 0 <= idx < len(self.pairs):
+                inp, outp, _ = self.pairs[idx]
+                if inp in self.test_files:
+                    self.test_files.remove(inp)
+                if outp in self.test_files:
+                    self.test_files.remove(outp)
+        self.pairs = pair_test_files(self.test_files)
+        self._refresh_listbox()
+
+    def _refresh_listbox(self):
+        self.file_listbox.delete(0, tk.END)
+        for inp, outp, name in self.pairs:
+            self.file_listbox.insert(tk.END, f"{name}  (in: {os.path.basename(inp)} | out: {os.path.basename(outp)})")
+        unpaired = len(self.test_files) - len(self.pairs) * 2
+        if unpaired > 0:
+            self.file_listbox.insert(tk.END, f"[警告] {unpaired} 个文件未能配对")
+
+    def _toggle_listbox_selection(self, event):
+        idx = self.file_listbox.nearest(event.y)
+        if idx < 0:
+            return
+        if idx in self.file_listbox.curselection():
+            self.file_listbox.selection_clear(idx)
+        else:
+            self.file_listbox.selection_set(idx)
 
     def clear_tests(self):
         self.test_files = []
