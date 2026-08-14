@@ -395,7 +395,7 @@ class JudgerApp:
         list_wrap = ttk.Frame(row2, style="Card.TFrame")
         list_wrap.pack(side="left", fill="both", expand=True, padx=(8, 8))
         self.file_listbox = tk.Listbox(
-            list_wrap, height=5, selectmode=tk.EXTENDED,
+            list_wrap, height=5, selectmode=tk.MULTIPLE,
             font=("Consolas", 9), bg="#f8f9fa", fg=TEXT_PRIMARY,
             selectbackground=PRIMARY, selectforeground="white",
             relief="solid", borderwidth=1, highlightthickness=0,
@@ -405,7 +405,6 @@ class JudgerApp:
         sb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.file_listbox.yview)
         sb.pack(side="right", fill="y")
         self.file_listbox.config(yscrollcommand=sb.set)
-        self.file_listbox.bind("<ButtonRelease-1>", self._toggle_listbox_selection)
 
         btn_col = ttk.Frame(row2, style="Card.TFrame")
         btn_col.pack(side="right", anchor="n")
@@ -531,15 +530,6 @@ class JudgerApp:
         unpaired = len(self.test_files) - len(self.pairs) * 2
         if unpaired > 0:
             self.file_listbox.insert(tk.END, f"[警告] {unpaired} 个文件未能配对")
-
-    def _toggle_listbox_selection(self, event):
-        idx = self.file_listbox.nearest(event.y)
-        if idx < 0:
-            return
-        if idx in self.file_listbox.curselection():
-            self.file_listbox.selection_clear(idx)
-        else:
-            self.file_listbox.selection_set(idx)
 
     def clear_tests(self):
         self.test_files = []
