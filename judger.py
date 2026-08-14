@@ -6,6 +6,7 @@ C++ Judger - 本地测评工具
 - 每次评测重新读取并编译源文件，编译失败完整反馈报错信息
 - 依次运行各测评点，反馈 AC / WA / TLE / MLE / RE 及运行时间与空间
 - 使用 Windows Job Object 监控内存并强制终止超限进程，无需 psutil
+- 支持深色/浅色模式切换，默认深色
 """
 
 import os
@@ -283,17 +284,56 @@ def pair_test_files(file_paths):
     return pairs
 
 
-# ============================ GUI 配色 ============================
+# ============================ 主题配色 ============================
 
-BG = "#f0f2f5"
-CARD = "#ffffff"
-BORDER = "#d0d5dd"
-PRIMARY = "#3b82f6"
-PRIMARY_HOVER = "#2563eb"
-TEXT_PRIMARY = "#1f2937"
-TEXT_SECONDARY = "#6b7280"
-RESULT_BG = "#1e1e2e"
-RESULT_FG = "#cdd6f4"
+THEMES = {
+    "dark": {
+        "bg": "#1e1e2e",
+        "card": "#313244",
+        "border": "#45475a",
+        "primary": "#89b4fa",
+        "primary_hover": "#74c7ec",
+        "text_primary": "#cdd6f4",
+        "text_secondary": "#a6adc8",
+        "listbox_bg": "#313244",
+        "listbox_fg": "#cdd6f4",
+        "result_bg": "#181825",
+        "result_fg": "#cdd6f4",
+        "result_select": "#45475a",
+        "tag_ac": "#a6e3a1",
+        "tag_wa": "#f38ba8",
+        "tag_tle": "#fab387",
+        "tag_mle": "#cba6f7",
+        "tag_re": "#f38ba8",
+        "tag_ce": "#f38ba8",
+        "tag_header": "#89b4fa",
+        "tag_info": "#a6adc8",
+        "tag_muted": "#6c7086",
+    },
+    "light": {
+        "bg": "#f0f2f5",
+        "card": "#ffffff",
+        "border": "#d0d5dd",
+        "primary": "#3b82f6",
+        "primary_hover": "#2563eb",
+        "text_primary": "#1f2937",
+        "text_secondary": "#6b7280",
+        "listbox_bg": "#f8f9fa",
+        "listbox_fg": "#1f2937",
+        "result_bg": "#1e1e2e",
+        "result_fg": "#cdd6f4",
+        "result_select": "#45475a",
+        "tag_ac": "#a6e3a1",
+        "tag_wa": "#f38ba8",
+        "tag_tle": "#fab387",
+        "tag_mle": "#cba6f7",
+        "tag_re": "#f38ba8",
+        "tag_ce": "#f38ba8",
+        "tag_header": "#89b4fa",
+        "tag_info": "#a6adc8",
+        "tag_muted": "#6c7086",
+    },
+}
 
 
 # ============================ GUI ============================
@@ -304,7 +344,9 @@ class JudgerApp:
         self.root.title("C++ Judger")
         self.root.geometry("960x720")
         self.root.minsize(800, 600)
-        self.root.configure(bg=BG)
+
+        self.dark_mode = True
+        self.c = THEMES["dark"]
 
         self.cpp_path = tk.StringVar(value="未选择")
         self.test_files = []
@@ -319,52 +361,73 @@ class JudgerApp:
 
         self._setup_style()
         self._build_ui()
+        self._apply_theme()
         self.root.after(100, self._process_queue)
 
     def _setup_style(self):
-        s = ttk.Style()
+        self.style = ttk.Style()
         try:
-            s.theme_use("vista")
+            self.style.theme_use("clam")
         except Exception:
-            try:
-                s.theme_use("clam")
-            except Exception:
-                pass
+            pass
 
-        s.configure(".", background=BG, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10))
-        s.configure("TFrame", background=BG)
-        s.configure("Card.TFrame", background=CARD)
-        s.configure("TLabel", background=BG, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10))
-        s.configure("Card.TLabel", background=CARD, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10))
-        s.configure("Dim.TLabel", background=BG, foreground=TEXT_SECONDARY, font=("Microsoft YaHei UI", 9))
-        s.configure("CardDim.TLabel", background=CARD, foreground=TEXT_SECONDARY, font=("Microsoft YaHei UI", 9))
-        s.configure("Title.TLabel", background=BG, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 16, "bold"))
-        s.configure("Section.TLabel", background=CARD, foreground=TEXT_PRIMARY, font=("Microsoft YaHei UI", 11, "bold"))
-        s.configure("Path.TLabel", background=CARD, foreground=TEXT_SECONDARY, font=("Consolas", 9))
+    def _configure_styles(self):
+        s = self.style
+        c = self.c
+        s.configure(".", background=c["bg"], foreground=c["text_primary"], font=("Microsoft YaHei UI", 10))
+        s.configure("TFrame", background=c["bg"])
+        s.configure("Card.TFrame", background=c["card"])
+        s.configure("TLabel", background=c["bg"], foreground=c["text_primary"], font=("Microsoft YaHei UI", 10))
+        s.configure("Card.TLabel", background=c["card"], foreground=c["text_primary"], font=("Microsoft YaHei UI", 10))
+        s.configure("Dim.TLabel", background=c["bg"], foreground=c["text_secondary"], font=("Microsoft YaHei UI", 9))
+        s.configure("CardDim.TLabel", background=c["card"], foreground=c["text_secondary"], font=("Microsoft YaHei UI", 9))
+        s.configure("Title.TLabel", background=c["bg"], foreground=c["text_primary"], font=("Microsoft YaHei UI", 16, "bold"))
+        s.configure("Section.TLabel", background=c["card"], foreground=c["text_primary"], font=("Microsoft YaHei UI", 11, "bold"))
+        s.configure("Path.TLabel", background=c["card"], foreground=c["text_secondary"], font=("Consolas", 9))
 
         s.configure("Primary.TButton", font=("Microsoft YaHei UI", 11, "bold"), padding=(20, 8))
         s.map("Primary.TButton",
-              background=[("active", PRIMARY_HOVER), ("!active", PRIMARY)],
+              background=[("active", c["primary_hover"]), ("!active", c["primary"])],
               foreground=[("active", "white"), ("!active", "white")])
-        s.configure("Secondary.TButton", font=("Microsoft YaHei UI", 10), padding=(12, 6))
-        s.configure("Small.TButton", font=("Microsoft YaHei UI", 9), padding=(8, 4))
+        s.configure("Secondary.TButton", font=("Microsoft YaHei UI", 10), padding=(12, 6),
+                    background=c["card"], foreground=c["text_primary"])
+        s.map("Secondary.TButton",
+              background=[("active", c["border"]), ("!active", c["card"])],
+              foreground=[("active", c["text_primary"]), ("!active", c["text_primary"])])
+        s.configure("Small.TButton", font=("Microsoft YaHei UI", 9), padding=(8, 4),
+                    background=c["card"], foreground=c["text_primary"])
+        s.map("Small.TButton",
+              background=[("active", c["border"]), ("!active", c["card"])],
+              foreground=[("active", c["text_primary"]), ("!active", c["text_primary"])])
 
-        s.configure("TEntry", padding=(8, 6), fieldbackground=CARD)
-        s.configure("TCombobox", padding=(8, 6))
+        s.configure("TEntry", padding=(8, 6), fieldbackground=c["card"], foreground=c["text_primary"],
+                    background=c["card"], bordercolor=c["border"], focuscolor=c["primary"])
+        s.configure("TCombobox", padding=(8, 6), fieldbackground=c["card"], foreground=c["text_primary"],
+                    background=c["card"], bordercolor=c["border"], focuscolor=c["primary"],
+                    selectbackground=c["primary"], selectforeground="white")
+        s.map("TCombobox",
+              fieldbackground=[("readonly", c["card"])],
+              foreground=[("readonly", c["text_primary"])],
+              selectbackground=[("readonly", c["primary"])],
+              selectforeground=[("readonly", "white")])
 
     def _build_ui(self):
-        main = ttk.Frame(self.root)
-        main.pack(fill="both", expand=True, padx=16, pady=12)
+        self.main_frame = ttk.Frame(self.root)
+        self.main_frame.pack(fill="both", expand=True, padx=16, pady=12)
 
-        header = ttk.Frame(main)
+        header = ttk.Frame(self.main_frame)
         header.pack(fill="x", pady=(0, 12))
+
+        self.theme_btn = ttk.Button(header, text="☀ 浅色", style="Small.TButton", command=self.toggle_theme, width=8)
+        self.theme_btn.pack(side="left", padx=(0, 12))
+
         ttk.Label(header, text="C++ Judger", style="Title.TLabel").pack(side="left")
         ttk.Label(header, text="  本地测评工具", style="Dim.TLabel").pack(side="left", padx=(4, 0), pady=(6, 0))
 
-        self._build_file_card(main)
-        self._build_option_card(main)
-        self._build_action_bar(main)
-        self._build_result_card(main)
+        self._build_file_card(self.main_frame)
+        self._build_option_card(self.main_frame)
+        self._build_action_bar(self.main_frame)
+        self._build_result_card(self.main_frame)
 
     def _card_frame(self, parent, title):
         outer = ttk.Frame(parent, style="Card.TFrame")
@@ -385,8 +448,8 @@ class JudgerApp:
         ttk.Label(row1, textvariable=self.cpp_path, style="Path.TLabel").pack(side="left", fill="x", expand=True, padx=(8, 8))
         ttk.Button(row1, text="选择", style="Small.TButton", command=self.choose_cpp).pack(side="right")
 
-        sep = tk.Frame(body, bg=BORDER, height=1)
-        sep.pack(fill="x", pady=(0, 8))
+        self.sep_frame = tk.Frame(body, height=1)
+        self.sep_frame.pack(fill="x", pady=(0, 8))
 
         row2 = ttk.Frame(body, style="Card.TFrame")
         row2.pack(fill="x")
@@ -396,8 +459,7 @@ class JudgerApp:
         list_wrap.pack(side="left", fill="both", expand=True, padx=(8, 8))
         self.file_listbox = tk.Listbox(
             list_wrap, height=5, selectmode=tk.MULTIPLE,
-            font=("Consolas", 9), bg="#f8f9fa", fg=TEXT_PRIMARY,
-            selectbackground=PRIMARY, selectforeground="white",
+            font=("Consolas", 9),
             relief="solid", borderwidth=1, highlightthickness=0,
             activestyle="none"
         )
@@ -426,7 +488,7 @@ class JudgerApp:
             ttk.Label(row1, text=unit, style="CardDim.TLabel").pack(side="left", padx=(0, 20))
 
         ttk.Label(row1, text="C++ 版本", style="Card.TLabel").pack(side="left", padx=(0, 4))
-        ttk.Combobox(row1, textvariable=self.std_var, values=["C++11", "C++14", "C++23"],
+        ttk.Combobox(row1, textvariable=self.std_var, values=["C++11", "C++14", "C++20", "C++23"],
                      width=8, state="readonly", font=("Consolas", 10)).pack(side="left")
 
         row2 = ttk.Frame(body, style="Card.TFrame")
@@ -457,8 +519,6 @@ class JudgerApp:
 
         self.result_text = tk.Text(
             result_wrap, wrap="none", font=("Consolas", 10),
-            bg=RESULT_BG, fg=RESULT_FG, insertbackground=RESULT_FG,
-            selectbackground="#45475a", selectforeground=RESULT_FG,
             relief="solid", borderwidth=1, highlightthickness=0,
             padx=12, pady=8, state="disabled", cursor="arrow"
         )
@@ -469,15 +529,39 @@ class JudgerApp:
         sb_y.pack(side="right", fill="y")
         self.result_text.pack(fill="both", expand=True)
 
-        self.result_text.tag_configure("ac", foreground="#a6e3a1", font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("wa", foreground="#f38ba8", font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("tle", foreground="#fab387", font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("mle", foreground="#cba6f7", font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("re", foreground="#f38ba8", font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("ce", foreground="#f38ba8", font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("header", foreground="#89b4fa", font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("info", foreground="#a6adc8")
-        self.result_text.tag_configure("muted", foreground="#6c7086")
+    def _configure_result_tags(self):
+        c = self.c
+        self.result_text.tag_configure("ac", foreground=c["tag_ac"], font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("wa", foreground=c["tag_wa"], font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("tle", foreground=c["tag_tle"], font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("mle", foreground=c["tag_mle"], font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("re", foreground=c["tag_re"], font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("ce", foreground=c["tag_ce"], font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("header", foreground=c["tag_header"], font=("Consolas", 10, "bold"))
+        self.result_text.tag_configure("info", foreground=c["tag_info"])
+        self.result_text.tag_configure("muted", foreground=c["tag_muted"])
+
+    def _apply_theme(self):
+        c = self.c
+        self.root.configure(bg=c["bg"])
+        self._configure_styles()
+        self.sep_frame.configure(bg=c["border"])
+        self.file_listbox.configure(
+            bg=c["listbox_bg"], fg=c["listbox_fg"],
+            selectbackground=c["primary"], selectforeground="white"
+        )
+        self.result_text.configure(
+            bg=c["result_bg"], fg=c["result_fg"],
+            insertbackground=c["result_fg"],
+            selectbackground=c["result_select"], selectforeground=c["result_fg"]
+        )
+        self._configure_result_tags()
+
+    def toggle_theme(self):
+        self.dark_mode = not self.dark_mode
+        self.c = THEMES["dark"] if self.dark_mode else THEMES["light"]
+        self.theme_btn.configure(text="☀ 浅色" if self.dark_mode else "🌙 深色")
+        self._apply_theme()
 
     # ---------- 文件选择 ----------
     def choose_cpp(self):
@@ -561,7 +645,7 @@ class JudgerApp:
             messagebox.showerror("错误", f"找不到编译器：{gpp}")
             return
 
-        std_map = {"C++11": "c++11", "C++14": "c++14", "C++23": "c++23"}
+        std_map = {"C++11": "c++11", "C++14": "c++14", "C++20": "c++20", "C++23": "c++23"}
         std_flag = std_map.get(self.std_var.get(), "c++14")
 
         self.running = True
