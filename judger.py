@@ -7,6 +7,7 @@ C++ Judger - 本地测评工具
 - 依次运行各测评点，反馈 AC / WA / TLE / MLE / RE 及运行时间与空间
 - 使用 Windows Job Object 监控内存并强制终止超限进程，无需 psutil
 - 支持深色/浅色模式切换，默认深色
+- 测评结果以折叠框展示，默认折叠，展开可查看输入/预期输出/输出/差异比较
 """
 
 import os
@@ -256,13 +257,27 @@ def compare_output(actual, expected):
     return normalize_text(actual) == normalize_text(expected)
 
 
-def make_diff(expected_bytes, actual_bytes):
-    e = normalize_text(expected_bytes)
-    a = normalize_text(actual_bytes)
-    diff = difflib.unified_diff(
-        e, a, fromfile="预期输出", tofile="实际输出", lineterm=""
-    )
-    return "\n".join(diff)
+def compute_diff(expected_bytes, actual_bytes):
+    e_lines = normalize_text(expected_bytes)
+    a_lines = normalize_text(actual_bytes)
+    sm = difflib.SequenceMatcher(None, e_lines, a_lines)
+    diff = []
+    for op, i1, i2, j1, j2 in sm.get_opcodes():
+        if op == 'equal':
+            for i in range(i1, i2):
+                diff.append(('equal', e_lines[i]))
+        elif op == 'delete':
+            for i in range(i1, i2):
+                diff.append(('delete', e_lines[i]))
+        elif op == 'insert':
+            for j in range(j1, j2):
+                diff.append(('insert', a_lines[j]))
+        elif op == 'replace':
+            for i in range(i1, i2):
+                diff.append(('delete', e_lines[i]))
+            for j in range(j1, j2):
+                diff.append(('insert', a_lines[j]))
+    return diff
 
 
 # ============================ 测评点配对 ============================
@@ -309,6 +324,8 @@ THEMES = {
         "tag_header": "#89b4fa",
         "tag_info": "#a6adc8",
         "tag_muted": "#6c7086",
+        "diff_delete": "#89b4fa",
+        "diff_insert": "#f38ba8",
     },
     "light": {
         "bg": "#f0f2f5",
@@ -332,8 +349,112 @@ THEMES = {
         "tag_header": "#89b4fa",
         "tag_info": "#a6adc8",
         "tag_muted": "#6c7086",
+        "diff_delete": "#89b4fa",
+        "diff_insert": "#f38ba8",
     },
 }
+
+
+# ============================ 折叠框 ============================
+
+class TestResultFrame(tk.Frame):
+    def __init__(self, parent, data, colors, **kwargs):
+        super().__init__(parent, bg=colors["card"], highlightthickness=1,
+                        highlightbackground=colors["border"], bd=0, **kwargs)
+        self.c = colors
+        self.data = data
+        self.expanded = False
+        self._build_header()
+        self._build_content()
+
+    def _build_header(self):
+        d = self.data
+        c = self.c
+        status_colors = {
+            "AC": c["tag_ac"], "WA": c["tag_wa"], "TLE": c["tag_tle"],
+            "MLE": c["tag_mle"], "RE": c["tag_re"], "CE": c["tag_ce"],
+        }
+        self.header = tk.Frame(self, bg=c["card"], cursor="hand2")
+        self.header.pack(fill="x", padx=10, pady=8)
+
+        self.arrow = tk.Label(self.header, text="▶", bg=c["card"],
+                              fg=c["text_secondary"], font=("Consolas", 11))
+        self.arrow.pack(side="left", padx=(0, 8))
+
+        name_lbl = tk.Label(self.header, text=f"#{d['index']}  {d['name']}", bg=c["card"],
+                             fg=c["text_primary"], font=("Microsoft YaHei UI", 10, "bold"))
+        name_lbl.pack(side="left", padx=(0, 16))
+
+        status_lbl = tk.Label(self.header, text=d["status"], bg=c["card"],
+                               fg=status_colors.get(d["status"], c["text_primary"]),
+                               font=("Consolas", 11, "bold"))
+        status_lbl.pack(side="left", padx=(0, 16))
+
+        info = f"{d['time_ms']} ms  |  {d['mem_kb']} KB"
+        info_lbl = tk.Label(self.header, text=info, bg=c["card"],
+                             fg=c["text_secondary"], font=("Consolas", 9))
+        info_lbl.pack(side="left")
+
+        for w in [self.header, self.arrow, name_lbl, status_lbl, info_lbl]:
+            w.bind("<Button-1>", self.toggle)
+
+    def _build_content(self):
+        d = self.data
+        c = self.c
+
+        self.content = tk.Frame(self, bg=c["result_bg"])
+
+        self.text = tk.Text(self.content, wrap="none", font=("Consolas", 9),
+                            bg=c["result_bg"], fg=c["result_fg"],
+                            relief="flat", height=16, padx=8, pady=4,
+                            state="disabled", cursor="arrow",
+                            selectbackground=c["result_select"],
+                            selectforeground=c["result_fg"])
+        sb_y = ttk.Scrollbar(self.content, orient="vertical", command=self.text.yview)
+        sb_x = ttk.Scrollbar(self.content, orient="horizontal", command=self.text.xview)
+        self.text.configure(yscrollcommand=sb_y.set, xscrollcommand=sb_x.set)
+        sb_x.pack(side="bottom", fill="x")
+        sb_y.pack(side="right", fill="y")
+        self.text.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 8))
+
+        self.text.tag_configure("section", foreground=c["tag_header"],
+                                font=("Microsoft YaHei UI", 9, "bold"))
+        self.text.tag_configure("content", foreground=c["result_fg"])
+        self.text.tag_configure("diff_delete", foreground=c["diff_delete"])
+        self.text.tag_configure("diff_insert", foreground=c["diff_insert"])
+        self.text.tag_configure("diff_equal", foreground=c["result_fg"])
+
+        self.text.config(state="normal")
+
+        self._insert_section("输入", d.get("input_text", ""))
+        self._insert_section("预期输出", d.get("expected_text", ""))
+        self._insert_section("输出", d.get("actual_text", ""))
+
+        if d["status"] == "WA" and d.get("diff"):
+            self.text.insert("end", "━━━ 差异比较 ━━━\n", "section")
+            for tag, line in d["diff"]:
+                prefix = {"delete": "- ", "insert": "+ "}.get(tag, "  ")
+                ttag = {"delete": "diff_delete", "insert": "diff_insert"}.get(tag, "diff_equal")
+                self.text.insert("end", f"{prefix}{line}\n", ttag)
+
+        self.text.config(state="disabled")
+
+    def _insert_section(self, title, text):
+        self.text.insert("end", f"━━━ {title} ━━━\n", "section")
+        if text:
+            self.text.insert("end", text + "\n\n", "content")
+        else:
+            self.text.insert("end", "(空)\n\n", "content")
+
+    def toggle(self, event=None):
+        if self.expanded:
+            self.content.pack_forget()
+            self.arrow.config(text="▶")
+            self.expanded = False
+        else:
+            self.content.pack(fill="x", padx=10, pady=(0, 8))
+            self.arrow.config(text="▼")
+            self.expanded = True
 
 
 # ============================ GUI ============================
@@ -358,6 +479,10 @@ class JudgerApp:
 
         self.queue = queue.Queue()
         self.running = False
+
+        self.results_data = []
+        self.compile_error = None
+        self.summary_data = None
 
         self._setup_style()
         self._build_ui()
@@ -436,10 +561,10 @@ class JudgerApp:
         ttk.Label(title_bar, text=title, style="Section.TLabel").pack(side="left")
         body = ttk.Frame(outer, style="Card.TFrame")
         body.pack(fill="x", padx=16, pady=(8, 12))
-        return outer, body
+        return outer, body, title_bar
 
     def _build_file_card(self, parent):
-        card, body = self._card_frame(parent, "文件选择")
+        card, body, _ = self._card_frame(parent, "文件选择")
         card.pack(fill="x", pady=(0, 8))
 
         row1 = ttk.Frame(body, style="Card.TFrame")
@@ -475,7 +600,7 @@ class JudgerApp:
         ttk.Button(btn_col, text="清空", style="Small.TButton", command=self.clear_tests).pack()
 
     def _build_option_card(self, parent):
-        card, body = self._card_frame(parent, "评测选项")
+        card, body, _ = self._card_frame(parent, "评测选项")
         card.pack(fill="x", pady=(0, 8))
 
         row1 = ttk.Frame(body, style="Card.TFrame")
@@ -507,39 +632,45 @@ class JudgerApp:
         self.status_label.pack(side="right", padx=(8, 0))
 
     def _build_result_card(self, parent):
-        card = ttk.Frame(parent, style="Card.TFrame")
+        card, _, title_bar = self._card_frame(parent, "评测结果")
         card.pack(fill="both", expand=True)
 
-        title_bar = ttk.Frame(card, style="Card.TFrame")
-        title_bar.pack(fill="x", padx=16, pady=(12, 0))
-        ttk.Label(title_bar, text="评测结果", style="Section.TLabel").pack(side="left")
+        self.summary_label = tk.Label(title_bar, text="", bg=self.c["card"],
+                                      fg=self.c["text_secondary"],
+                                      font=("Microsoft YaHei UI", 9))
+        self.summary_label.pack(side="right", padx=(8, 0))
 
         result_wrap = ttk.Frame(card, style="Card.TFrame")
         result_wrap.pack(fill="both", expand=True, padx=16, pady=(8, 12))
 
-        self.result_text = tk.Text(
-            result_wrap, wrap="none", font=("Consolas", 10),
-            relief="solid", borderwidth=1, highlightthickness=0,
-            padx=12, pady=8, state="disabled", cursor="arrow"
-        )
-        sb_y = ttk.Scrollbar(result_wrap, orient="vertical", command=self.result_text.yview)
-        sb_x = ttk.Scrollbar(result_wrap, orient="horizontal", command=self.result_text.xview)
-        self.result_text.configure(yscrollcommand=sb_y.set, xscrollcommand=sb_x.set)
-        sb_x.pack(side="bottom", fill="x")
-        sb_y.pack(side="right", fill="y")
-        self.result_text.pack(fill="both", expand=True)
+        self.result_canvas = tk.Canvas(result_wrap, highlightthickness=0, bg=self.c["bg"])
+        self.result_vscroll = ttk.Scrollbar(result_wrap, orient="vertical", command=self.result_canvas.yview)
+        self.result_inner = tk.Frame(self.result_canvas, bg=self.c["bg"])
 
-    def _configure_result_tags(self):
-        c = self.c
-        self.result_text.tag_configure("ac", foreground=c["tag_ac"], font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("wa", foreground=c["tag_wa"], font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("tle", foreground=c["tag_tle"], font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("mle", foreground=c["tag_mle"], font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("re", foreground=c["tag_re"], font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("ce", foreground=c["tag_ce"], font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("header", foreground=c["tag_header"], font=("Consolas", 10, "bold"))
-        self.result_text.tag_configure("info", foreground=c["tag_info"])
-        self.result_text.tag_configure("muted", foreground=c["tag_muted"])
+        self.result_inner.bind("<Configure>",
+            lambda e: self.result_canvas.configure(scrollregion=self.result_canvas.bbox("all")))
+
+        self._canvas_window = self.result_canvas.create_window((0, 0), window=self.result_inner, anchor="nw")
+        self.result_canvas.configure(yscrollcommand=self.result_vscroll.set)
+        self.result_canvas.bind("<Configure>", self._on_canvas_configure)
+
+        self.result_vscroll.pack(side="right", fill="y")
+        self.result_canvas.pack(side="left", fill="both", expand=True)
+
+        self.result_canvas.bind("<Enter>", self._bind_mousewheel)
+        self.result_canvas.bind("<Leave>", self._unbind_mousewheel)
+
+    def _on_canvas_configure(self, event):
+        self.result_canvas.itemconfig(self._canvas_window, width=event.width)
+
+    def _bind_mousewheel(self, event):
+        self.result_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self, event):
+        self.result_canvas.unbind_all("<MouseWheel>")
+
+    def _on_mousewheel(self, event):
+        self.result_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _apply_theme(self):
         c = self.c
@@ -550,12 +681,10 @@ class JudgerApp:
             bg=c["listbox_bg"], fg=c["listbox_fg"],
             selectbackground=c["primary"], selectforeground="white"
         )
-        self.result_text.configure(
-            bg=c["result_bg"], fg=c["result_fg"],
-            insertbackground=c["result_fg"],
-            selectbackground=c["result_select"], selectforeground=c["result_fg"]
-        )
-        self._configure_result_tags()
+        self.result_canvas.configure(bg=c["bg"])
+        self.result_inner.configure(bg=c["bg"])
+        self.summary_label.configure(bg=c["card"], fg=c["text_secondary"])
+        self._render_results()
 
     def toggle_theme(self):
         self.dark_mode = not self.dark_mode
@@ -620,6 +749,49 @@ class JudgerApp:
         self.pairs = []
         self.file_listbox.delete(0, tk.END)
 
+    # ---------- 结果渲染 ----------
+    def _render_results(self):
+        for w in self.result_inner.winfo_children():
+            w.destroy()
+
+        if self.compile_error:
+            c = self.c
+            err_frame = tk.Frame(self.result_inner, bg=c["card"], highlightthickness=1,
+                                  highlightbackground=c["tag_re"], bd=0)
+            err_frame.pack(fill="x", pady=(0, 6), padx=4)
+
+            err_header = tk.Frame(err_frame, bg=c["card"], cursor="hand2")
+            err_header.pack(fill="x", padx=10, pady=8)
+            tk.Label(err_header, text="编译失败", bg=c["card"], fg=c["tag_re"],
+                     font=("Microsoft YaHei UI", 10, "bold")).pack(side="left")
+
+            err_text = tk.Text(err_frame, wrap="none", font=("Consolas", 9),
+                               bg=c["result_bg"], fg=c["result_fg"],
+                               relief="flat", height=12, padx=8, pady=4,
+                               state="disabled", cursor="arrow",
+                               selectbackground=c["result_select"],
+                               selectforeground=c["result_fg"])
+            sb_y = ttk.Scrollbar(err_frame, orient="vertical", command=err_text.yview)
+            sb_x = ttk.Scrollbar(err_frame, orient="horizontal", command=err_text.xview)
+            err_text.configure(yscrollcommand=sb_y.set, xscrollcommand=sb_x.set)
+            sb_x.pack(side="bottom", fill="x", padx=(10, 0))
+            sb_y.pack(side="right", fill="y", padx=(0, 10))
+            err_text.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 8))
+            err_text.config(state="normal")
+            err_text.insert("end", self.compile_error)
+            err_text.config(state="disabled")
+
+        for data in self.results_data:
+            frame = TestResultFrame(self.result_inner, data, self.c)
+            frame.pack(fill="x", pady=(0, 6), padx=4)
+
+        if self.summary_data:
+            passed, total = self.summary_data
+            tag = "tag_ac" if passed == total else "tag_wa"
+            self.summary_label.config(text=f"{passed}/{total} 通过", fg=self.c[tag])
+        else:
+            self.summary_label.config(text="")
+
     # ---------- 评测 ----------
     def start_judge(self):
         if self.running:
@@ -651,7 +823,11 @@ class JudgerApp:
         self.running = True
         self.start_btn.config(state="disabled")
         self.status_label.config(text="评测中…")
-        self.clear_result()
+        self.results_data = []
+        self.compile_error = None
+        self.summary_data = None
+        self._render_results()
+
         threading.Thread(
             target=self._judge_worker,
             args=(cpp, std_flag, gpp, tl, ml, list(self.pairs)),
@@ -659,62 +835,73 @@ class JudgerApp:
         ).start()
 
     def _judge_worker(self, cpp, std_flag, gpp, tl, ml, pairs):
-        self.queue.put(("info", f"开始评测：{os.path.basename(cpp)}"))
-        self.queue.put(("info", f"标准：{std_flag} | 时间限制：{tl} ms | 空间限制：{ml} MB | 测评点：{len(pairs)} 个"))
-        self.queue.put(("info", ""))
-
         work_dir = tempfile.mkdtemp(prefix="judger_")
         exe_path = os.path.join(work_dir, "solution.exe")
 
         try:
-            self.queue.put(("info", "正在编译…"))
+            self.queue.put(("status", "正在编译…"))
             code, out, err = compile_cpp(cpp, std_flag, gpp, exe_path)
             if code != 0:
-                self.queue.put(("ce", "编译失败，以下为完整报错信息："))
-                self.queue.put(("block", err if err else out))
+                self.queue.put(("compile_error", err if err else out))
                 self.queue.put(("done", 0, len(pairs)))
                 return
-            self.queue.put(("ac", "编译成功。"))
-            self.queue.put(("info", ""))
 
+            self.queue.put(("status", "编译成功，开始评测…"))
             passed = 0
+
             for i, (inp, outp, name) in enumerate(pairs, 1):
-                self.queue.put(("header", f"#{i}  {name}"))
                 res = run_test(exe_path, inp, tl, ml)
 
-                if res["status"] is None:
-                    try:
-                        with open(outp, "rb") as f:
-                            expected = f.read()
-                    except Exception as e:
-                        res["status"] = "RE"
-                        res["output"] = f"无法读取预期输出文件：{e}".encode("utf-8")
-                        expected = b""
+                input_text = ""
+                try:
+                    with open(inp, "r", encoding="utf-8", errors="replace") as f:
+                        input_text = f.read()
+                except Exception:
+                    input_text = "(无法读取)"
+
+                expected_bytes = b""
+                expected_text = ""
+                try:
+                    with open(outp, "rb") as f:
+                        expected_bytes = f.read()
+                    expected_text = expected_bytes.decode("utf-8", errors="replace")
+                except Exception:
+                    expected_text = "(无法读取)"
+
+                actual_bytes = res["output"]
+                actual_text = actual_bytes.decode("utf-8", errors="replace") if actual_bytes else ""
 
                 if res["status"] is None:
-                    if compare_output(res["output"], expected):
+                    if compare_output(actual_bytes, expected_bytes):
                         res["status"] = "AC"
                     else:
                         res["status"] = "WA"
 
-                status = res["status"]
-                tag = status.lower()
-                self.queue.put((tag, f"  结果：{status}    时间：{res['time_ms']} ms    空间：{res['mem_kb']} KB    退出码：{res['exit_code']}"))
+                diff = None
+                if res["status"] == "WA":
+                    diff = compute_diff(expected_bytes, actual_bytes)
 
-                if status == "AC":
+                if res["status"] == "AC":
                     passed += 1
-                elif status == "WA":
-                    self.queue.put(("muted", "  --- 预期输出 ---"))
-                    self.queue.put(("block", normalize_text(expected)))
-                    self.queue.put(("muted", "  --- 实际输出 ---"))
-                    self.queue.put(("block", normalize_text(res["output"])))
-                    self.queue.put(("muted", "  --- 差异比较 ---"))
-                    self.queue.put(("block", make_diff(expected, res["output"])))
-                self.queue.put(("info", ""))
+
+                result_data = {
+                    "index": i,
+                    "name": name,
+                    "status": res["status"],
+                    "time_ms": res["time_ms"],
+                    "mem_kb": res["mem_kb"],
+                    "exit_code": res["exit_code"],
+                    "input_text": input_text,
+                    "expected_text": expected_text,
+                    "actual_text": actual_text,
+                    "diff": diff,
+                }
+                self.queue.put(("test_result", result_data))
+                self.queue.put(("status", f"评测中… {i}/{len(pairs)}"))
 
             self.queue.put(("done", passed, len(pairs)))
         except Exception as e:
-            self.queue.put(("re", f"评测过程中发生异常：{e}"))
+            self.queue.put(("compile_error", f"评测过程中发生异常：{e}"))
             self.queue.put(("done", 0, len(pairs)))
         finally:
             try:
@@ -736,32 +923,30 @@ class JudgerApp:
 
     def _handle_msg(self, msg):
         kind = msg[0]
-        self.result_text.config(state="normal")
-        if kind == "block":
-            lines = msg[1]
-            if isinstance(lines, list):
-                text = "\n".join(lines)
-            else:
-                text = str(lines)
-            self.result_text.insert("end", text + "\n", "info")
+        if kind == "status":
+            self.status_label.config(text=msg[1])
+        elif kind == "compile_error":
+            self.compile_error = msg[1]
+            self._render_results()
+        elif kind == "test_result":
+            self.results_data.append(msg[1])
+            frame = TestResultFrame(self.result_inner, msg[1], self.c)
+            frame.pack(fill="x", pady=(0, 6), padx=4)
         elif kind == "done":
             passed, total = msg[1], msg[2]
-            tag = "ac" if passed == total else "wa"
-            self.result_text.insert("end", f"评测完成：{passed}/{total} 通过\n", tag)
+            self.summary_data = (passed, total)
+            tag = "tag_ac" if passed == total else "tag_wa"
+            self.summary_label.config(text=f"{passed}/{total} 通过", fg=self.c[tag])
             self.running = False
             self.start_btn.config(state="normal")
             self.status_label.config(text=f"完成  {passed}/{total} 通过")
-        else:
-            text = msg[1]
-            tag = kind if kind in ("ac", "wa", "tle", "mle", "re", "ce", "header", "info", "muted") else "info"
-            self.result_text.insert("end", text + "\n", tag)
-        self.result_text.config(state="disabled")
-        self.result_text.see("end")
 
     def clear_result(self):
-        self.result_text.config(state="normal")
-        self.result_text.delete("1.0", "end")
-        self.result_text.config(state="disabled")
+        self.results_data = []
+        self.compile_error = None
+        self.summary_data = None
+        self._render_results()
+        self.status_label.config(text="")
 
 
 def main():
