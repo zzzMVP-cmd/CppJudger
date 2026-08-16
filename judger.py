@@ -21,6 +21,7 @@ import ctypes
 from ctypes import wintypes
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import shutil
 import queue
 import difflib
 
@@ -375,6 +376,10 @@ THEMES = {
         "tag_muted": "#6c7086",
         "diff_delete": "#89b4fa",
         "diff_insert": "#f38ba8",
+        "scrollbar_trough": "#313244",
+        "scrollbar_bg": "#a0a0a0",
+        "scrollbar_active": "#b8b8b8",
+        "scrollbar_arrow": "#404040",
     },
     "light": {
         "bg": "#f0f2f5",
@@ -400,11 +405,17 @@ THEMES = {
         "tag_muted": "#6c7086",
         "diff_delete": "#89b4fa",
         "diff_insert": "#f38ba8",
+        "scrollbar_trough": "#f0f2f5",
+        "scrollbar_bg": "#c0c0c0",
+        "scrollbar_active": "#d0d0d0",
+        "scrollbar_arrow": "#404040",
     },
 }
 
 
 # ============================ 折叠框 ============================
+MAX_DISPLAY_LENGTH = 512
+
 
 class TestResultFrame(tk.Frame):
     def __init__(self, parent, data, colors, **kwargs):
@@ -483,20 +494,27 @@ class TestResultFrame(tk.Frame):
         self._insert_section("输出", d.get("actual_text", ""))
 
         if d["status"] == "WA" and d.get("diff"):
-            self.text.insert("end", "━━━ 差异比较 ━━━\n", "section")
-            for tag, line in d["diff"]:
-                prefix = {"delete": "- ", "insert": "+ "}.get(tag, "  ")
-                ttag = {"delete": "diff_delete", "insert": "diff_insert"}.get(tag, "diff_equal")
-                self.text.insert("end", f"{prefix}{line}\n", ttag)
+            diff_text = "\n".join(f'{({"delete": "- ", "insert": "+ "}.get(tag, "  "))}{line}' for tag, line in d["diff"])
+            if len(diff_text) > MAX_DISPLAY_LENGTH:
+                self.text.insert("end", "━━━ 差异比较 ━━━\n", "section")
+                self.text.insert("end", f"差异过长（{len(diff_text)} 字符），不显示。\n\n", "content")
+            else:
+                self.text.insert("end", "━━━ 差异比较 ━━━\n", "section")
+                for tag, line in d["diff"]:
+                    prefix = {"delete": "- ", "insert": "+ "}.get(tag, "  ")
+                    ttag = {"delete": "diff_delete", "insert": "diff_insert"}.get(tag, "diff_equal")
+                    self.text.insert("end", f"{prefix}{line}\n", ttag)
 
         self.text.config(state="disabled")
 
     def _insert_section(self, title, text):
         self.text.insert("end", f"━━━ {title} ━━━\n", "section")
-        if text:
-            self.text.insert("end", text + "\n\n", "content")
-        else:
+        if not text:
             self.text.insert("end", "(空)\n\n", "content")
+        elif len(text) > MAX_DISPLAY_LENGTH:
+            self.text.insert("end", f"文件过长（{len(text)} 字符），不显示。\n\n", "content")
+        else:
+            self.text.insert("end", text + "\n\n", "content")
 
     def toggle(self, event=None):
         if self.expanded:
@@ -531,14 +549,17 @@ class JudgerApp:
 
         self.queue = queue.Queue()
         self.running = False
+        self.work_dir = None
 
         self.results_data = []
         self.compile_error = None
         self.summary_data = None
 
+        self._cleanup_stale()
         self._setup_style()
         self._build_ui()
         self._apply_theme()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._process_queue)
 
     def _setup_style(self):
@@ -587,6 +608,19 @@ class JudgerApp:
               foreground=[("readonly", c["text_primary"])],
               selectbackground=[("readonly", c["primary"])],
               selectforeground=[("readonly", "white")])
+
+        s.configure("Vertical.TScrollbar", background=c["scrollbar_bg"],
+                    troughcolor=c["scrollbar_trough"], bordercolor=c["scrollbar_trough"],
+                    arrowcolor=c["scrollbar_arrow"], arrowsize=14)
+        s.map("Vertical.TScrollbar",
+              background=[("active", c["scrollbar_active"]), ("!active", c["scrollbar_bg"])],
+              arrowcolor=[("active", c["scrollbar_arrow"]), ("!active", c["scrollbar_arrow"])])
+        s.configure("Horizontal.TScrollbar", background=c["scrollbar_bg"],
+                    troughcolor=c["scrollbar_trough"], bordercolor=c["scrollbar_trough"],
+                    arrowcolor=c["scrollbar_arrow"], arrowsize=14)
+        s.map("Horizontal.TScrollbar",
+              background=[("active", c["scrollbar_active"]), ("!active", c["scrollbar_bg"])],
+              arrowcolor=[("active", c["scrollbar_arrow"]), ("!active", c["scrollbar_arrow"])])
 
     def _build_ui(self):
         self.main_frame = ttk.Frame(self.root)
@@ -890,6 +924,7 @@ class JudgerApp:
 
     def _judge_worker(self, cpp, std_flag, gpp, tl, ml, pairs, parallel):
         work_dir = tempfile.mkdtemp(prefix="judger_")
+        self.work_dir = work_dir
         exe_path = os.path.join(work_dir, "solution.exe")
 
         try:
@@ -983,12 +1018,8 @@ class JudgerApp:
             self.queue.put(("compile_error", f"评测过程中发生异常：{e}"))
             self.queue.put(("done", 0, len(pairs)))
         finally:
-            try:
-                if os.path.exists(exe_path):
-                    os.remove(exe_path)
-                os.rmdir(work_dir)
-            except Exception:
-                pass
+            self._cleanup_workdir(work_dir)
+            self.work_dir = None
 
     # ---------- 队列处理 ----------
     def _process_queue(self):
@@ -1026,6 +1057,31 @@ class JudgerApp:
         self.summary_data = None
         self._render_results()
         self.status_label.config(text="")
+
+    def _cleanup_workdir(self, work_dir):
+        if work_dir and os.path.isdir(work_dir):
+            try:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    def _cleanup_stale(self):
+        tmp = tempfile.gettempdir()
+        try:
+            for name in os.listdir(tmp):
+                if name.startswith("judger_"):
+                    path = os.path.join(tmp, name)
+                    try:
+                        shutil.rmtree(path, ignore_errors=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _on_close(self):
+        if self.work_dir:
+            self._cleanup_workdir(self.work_dir)
+        self.root.destroy()
 
 
 def main():
