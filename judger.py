@@ -93,6 +93,25 @@ kernel32.OpenProcess.restype = wintypes.HANDLE
 kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
 kernel32.CloseHandle.restype = wintypes.BOOL
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.QueryPerformanceCounter.argtypes = [ctypes.POINTER(LARGE_INTEGER)]
+kernel32.QueryPerformanceCounter.restype = wintypes.BOOL
+kernel32.QueryPerformanceFrequency.argtypes = [ctypes.POINTER(LARGE_INTEGER)]
+kernel32.QueryPerformanceFrequency.restype = wintypes.BOOL
+
+
+def _qpc_freq():
+    freq = LARGE_INTEGER()
+    kernel32.QueryPerformanceFrequency(ctypes.byref(freq))
+    return freq.value
+
+
+_QPC_FREQ = _qpc_freq()
+
+
+def qpc_ms():
+    counter = LARGE_INTEGER()
+    kernel32.QueryPerformanceCounter(ctypes.byref(counter))
+    return counter.value * 1000.0 / _QPC_FREQ
 
 
 def create_job():
@@ -116,6 +135,31 @@ def query_peak_memory(hJob):
         ctypes.sizeof(info), ctypes.byref(ret)
     )
     return int(info.PeakProcessMemoryUsed) if ok else 0
+
+
+EXIT_CODE_MAP = {
+    0xC0000005: "ACCESS_VIOLATION (段错误 / 非法内存访问)",
+    0xC0000094: "INTEGER_DIVIDE_BY_ZERO (整数除以零)",
+    0xC00000FD: "STACK_OVERFLOW (栈溢出)",
+    0xC0000008: "DATATYPE_MISALIGNMENT (数据未对齐)",
+    0xC000001D: "ILLEGAL_INSTRUCTION (非法指令)",
+    0xC0000096: "PRIVILEGED_INSTRUCTION (特权指令)",
+    0xC000013A: "CTRL_C_EXIT (被 Ctrl+C 中断)",
+    0xC0000135: "DLL_NOT_FOUND (找不到 DLL)",
+    0xC0000142: "DLL_INIT_FAILED (DLL 初始化失败)",
+    0xC0000022: "ACCESS_DENIED (访问被拒绝)",
+    0xC000012F: "BAD_EXE_FORMAT (可执行文件格式错误)",
+}
+
+
+def decode_exit_code(code):
+    if code == 0:
+        return ""
+    if code in EXIT_CODE_MAP:
+        return f"RE ({EXIT_CODE_MAP[code]})"
+    if 0xC0000000 <= code <= 0xCFFFFFFF:
+        return f"RE (NTSTATUS: 0x{code:08X})"
+    return f"RE (退出码: {code})"
 
 
 # ============================ 编译 ============================
@@ -150,6 +194,7 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
         "mem_kb": 0,
         "output": b"",
         "exit_code": 0,
+        "re_detail": "",
     }
 
     hJob = create_job()
@@ -157,7 +202,8 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
         fin = open(input_path, "rb")
     except Exception as e:
         result["status"] = "RE"
-        result["output"] = f"无法读取输入文件：{e}".encode("utf-8")
+        result["re_detail"] = f"无法读取输入文件：{e}"
+        result["output"] = result["re_detail"].encode("utf-8")
         kernel32.CloseHandle(hJob)
         return result
 
@@ -172,7 +218,8 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
     except Exception as e:
         fin.close()
         result["status"] = "RE"
-        result["output"] = f"无法启动程序：{e}".encode("utf-8")
+        result["re_detail"] = f"无法启动程序：{e}"
+        result["output"] = result["re_detail"].encode("utf-8")
         kernel32.CloseHandle(hJob)
         return result
     finally:
@@ -198,12 +245,12 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
     t_reader = threading.Thread(target=reader, daemon=True)
     t_reader.start()
 
-    start = time.perf_counter()
+    start = qpc_ms()
     killed_by_time = False
     killed_by_mem = False
 
     while proc.poll() is None:
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        elapsed_ms = qpc_ms() - start
         if elapsed_ms > hard_time_ms:
             kernel32.TerminateJobObject(hJob, 1)
             killed_by_time = True
@@ -213,11 +260,11 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
             kernel32.TerminateJobObject(hJob, 1)
             killed_by_mem = True
             break
-        time.sleep(0.02)
+        time.sleep(0.005)
 
     proc.wait()
     t_reader.join(timeout=3)
-    elapsed_ms = (time.perf_counter() - start) * 1000
+    elapsed_ms = qpc_ms() - start
     peak = query_peak_memory(hJob)
 
     result["time_ms"] = int(elapsed_ms)
@@ -231,6 +278,7 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
         result["status"] = "MLE"
     elif proc.returncode != 0:
         result["status"] = "RE"
+        result["re_detail"] = decode_exit_code(proc.returncode)
     elif elapsed_ms > time_limit_ms:
         result["status"] = "TLE"
     elif peak > mem_limit_bytes:
@@ -386,9 +434,12 @@ class TestResultFrame(tk.Frame):
                              fg=c["text_primary"], font=("Microsoft YaHei UI", 10, "bold"))
         name_lbl.pack(side="left", padx=(0, 16))
 
-        status_lbl = tk.Label(self.header, text=d["status"], bg=c["card"],
+        status_text = d["status"]
+        if d["status"] == "RE" and d.get("re_detail"):
+            status_text = d["re_detail"]
+        status_lbl = tk.Label(self.header, text=status_text, bg=c["card"],
                                fg=status_colors.get(d["status"], c["text_primary"]),
-                               font=("Consolas", 11, "bold"))
+                               font=("Consolas", 10, "bold"))
         status_lbl.pack(side="left", padx=(0, 16))
 
         info = f"{d['time_ms']} ms  |  {d['mem_kb']} KB"
@@ -890,6 +941,7 @@ class JudgerApp:
                     "time_ms": res["time_ms"],
                     "mem_kb": res["mem_kb"],
                     "exit_code": res["exit_code"],
+                    "re_detail": res.get("re_detail", ""),
                     "input_text": input_text,
                     "expected_text": expected_text,
                     "actual_text": actual_text,
