@@ -20,6 +20,7 @@ import subprocess
 import ctypes
 from ctypes import wintypes
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import queue
 import difflib
 
@@ -812,6 +813,8 @@ class JudgerApp:
             messagebox.showerror("错误", "时间限制与空间限制必须为正整数。")
             return
 
+        parallel = os.cpu_count() or 4
+
         gpp = self.gpp_path.get().strip()
         if not os.path.isfile(gpp):
             messagebox.showerror("错误", f"找不到编译器：{gpp}")
@@ -830,11 +833,11 @@ class JudgerApp:
 
         threading.Thread(
             target=self._judge_worker,
-            args=(cpp, std_flag, gpp, tl, ml, list(self.pairs)),
+            args=(cpp, std_flag, gpp, tl, ml, list(self.pairs), parallel),
             daemon=True
         ).start()
 
-    def _judge_worker(self, cpp, std_flag, gpp, tl, ml, pairs):
+    def _judge_worker(self, cpp, std_flag, gpp, tl, ml, pairs, parallel):
         work_dir = tempfile.mkdtemp(prefix="judger_")
         exe_path = os.path.join(work_dir, "solution.exe")
 
@@ -847,9 +850,8 @@ class JudgerApp:
                 return
 
             self.queue.put(("status", "编译成功，开始评测…"))
-            passed = 0
 
-            for i, (inp, outp, name) in enumerate(pairs, 1):
+            def run_single(i, inp, outp, name):
                 res = run_test(exe_path, inp, tl, ml)
 
                 input_text = ""
@@ -881,10 +883,7 @@ class JudgerApp:
                 if res["status"] == "WA":
                     diff = compute_diff(expected_bytes, actual_bytes)
 
-                if res["status"] == "AC":
-                    passed += 1
-
-                result_data = {
+                return {
                     "index": i,
                     "name": name,
                     "status": res["status"],
@@ -896,8 +895,36 @@ class JudgerApp:
                     "actual_text": actual_text,
                     "diff": diff,
                 }
-                self.queue.put(("test_result", result_data))
-                self.queue.put(("status", f"评测中… {i}/{len(pairs)}"))
+
+            tasks = [(i, inp, outp, name) for i, (inp, outp, name) in enumerate(pairs, 1)]
+            all_results = [None] * len(pairs)
+            next_send = 0
+            completed = 0
+            passed = 0
+
+            with ThreadPoolExecutor(max_workers=parallel) as executor:
+                future_map = {executor.submit(run_single, *task): task[0] for task in tasks}
+                for future in as_completed(future_map):
+                    try:
+                        result_data = future.result()
+                    except Exception as e:
+                        idx = future_map[future]
+                        result_data = {
+                            "index": idx, "name": pairs[idx - 1][2],
+                            "status": "RE", "time_ms": 0, "mem_kb": 0,
+                            "exit_code": -1, "input_text": "", "expected_text": "",
+                            "actual_text": f"运行异常：{e}", "diff": None,
+                        }
+                    all_results[result_data["index"] - 1] = result_data
+                    completed += 1
+                    self.queue.put(("status", f"评测中… {completed}/{len(pairs)}"))
+
+                    while next_send < len(pairs) and all_results[next_send] is not None:
+                        rd = all_results[next_send]
+                        next_send += 1
+                        if rd["status"] == "AC":
+                            passed += 1
+                        self.queue.put(("test_result", rd))
 
             self.queue.put(("done", passed, len(pairs)))
         except Exception as e:
