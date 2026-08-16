@@ -138,17 +138,17 @@ def query_peak_memory(hJob):
 
 
 EXIT_CODE_MAP = {
-    0xC0000005: "ACCESS_VIOLATION (段错误 / 非法内存访问)",
-    0xC0000094: "INTEGER_DIVIDE_BY_ZERO (整数除以零)",
-    0xC00000FD: "STACK_OVERFLOW (栈溢出)",
-    0xC0000008: "DATATYPE_MISALIGNMENT (数据未对齐)",
-    0xC000001D: "ILLEGAL_INSTRUCTION (非法指令)",
-    0xC0000096: "PRIVILEGED_INSTRUCTION (特权指令)",
-    0xC000013A: "CTRL_C_EXIT (被 Ctrl+C 中断)",
-    0xC0000135: "DLL_NOT_FOUND (找不到 DLL)",
-    0xC0000142: "DLL_INIT_FAILED (DLL 初始化失败)",
-    0xC0000022: "ACCESS_DENIED (访问被拒绝)",
-    0xC000012F: "BAD_EXE_FORMAT (可执行文件格式错误)",
+    0xC0000005: "段错误 / 非法内存访问",
+    0xC0000094: "整数除以零",
+    0xC00000FD: "栈溢出",
+    0xC0000008: "数据未对齐",
+    0xC000001D: "非法指令（常见于整数除零、未定义行为）",
+    0xC0000096: "特权指令",
+    0xC000013A: "被 Ctrl+C 中断",
+    0xC0000135: "找不到 DLL",
+    0xC0000142: "DLL 初始化失败",
+    0xC0000022: "访问被拒绝",
+    0xC000012F: "可执行文件格式错误",
 }
 
 
