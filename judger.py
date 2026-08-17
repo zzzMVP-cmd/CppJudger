@@ -775,6 +775,20 @@ class JudgerApp:
         self.result_canvas.unbind_all("<MouseWheel>")
 
     def _on_mousewheel(self, event):
+        widget = event.widget
+        while widget:
+            if isinstance(widget, tk.Text):
+                return
+            try:
+                widget = widget.master
+            except Exception:
+                break
+        bbox = self.result_canvas.bbox("all")
+        if bbox:
+            content_h = bbox[3] - bbox[1]
+            canvas_h = self.result_canvas.winfo_height()
+            if content_h <= canvas_h:
+                return
         self.result_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _apply_theme(self):
@@ -896,6 +910,8 @@ class JudgerApp:
             self.summary_label.config(text=f"{passed}/{total} 通过", fg=self.c[tag])
         else:
             self.summary_label.config(text="")
+
+        self.result_canvas.yview_moveto(0)
 
     # ---------- 评测 ----------
     def start_judge(self):
