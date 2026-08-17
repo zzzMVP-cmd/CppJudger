@@ -12,6 +12,7 @@ C++ Judger - 本地测评工具
 
 import os
 import sys
+import json
 import time
 import locale
 import tempfile
@@ -166,6 +167,8 @@ def decode_exit_code(code):
 # ============================ 编译 ============================
 
 DEFAULT_GPP = r"D:\zzzMVP\MinGW64\bin\g++.exe"
+_CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "CppJudger")
+CONFIG_PATH = os.path.join(_CONFIG_DIR, "config.json")
 
 
 def compile_cpp(cpp_path, std_flag, gpp_path, out_exe):
@@ -564,20 +567,24 @@ class JudgerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("C++ Judger")
-        self.root.geometry("960x720")
+
+        cfg = self._load_config()
+
+        geo = cfg.get("geometry", "960x720")
+        self.root.geometry(geo)
         self.root.minsize(800, 600)
 
-        self.dark_mode = True
-        self.c = THEMES["dark"]
+        self.dark_mode = cfg.get("dark_mode", True)
+        self.c = THEMES["dark"] if self.dark_mode else THEMES["light"]
 
-        self.cpp_path = tk.StringVar(value="未选择")
-        self.test_files = []
-        self.pairs = []
-        self.time_limit = tk.StringVar(value="1000")
-        self.mem_limit = tk.StringVar(value="256")
-        self.output_limit = tk.StringVar(value="256")
-        self.std_var = tk.StringVar(value="C++14")
-        self.gpp_path = tk.StringVar(value=DEFAULT_GPP)
+        self.cpp_path = tk.StringVar(value=cfg.get("cpp_path", "未选择"))
+        self.test_files = cfg.get("test_files", [])
+        self.pairs = pair_test_files(self.test_files) if self.test_files else []
+        self.time_limit = tk.StringVar(value=cfg.get("time_limit", "1000"))
+        self.mem_limit = tk.StringVar(value=cfg.get("mem_limit", "256"))
+        self.output_limit = tk.StringVar(value=cfg.get("output_limit", "256"))
+        self.std_var = tk.StringVar(value=cfg.get("std_var", "C++14"))
+        self.gpp_path = tk.StringVar(value=cfg.get("gpp_path", DEFAULT_GPP))
 
         self.queue = queue.Queue()
         self.running = False
@@ -591,6 +598,9 @@ class JudgerApp:
         self._setup_style()
         self._build_ui()
         self._apply_theme()
+        if self.test_files:
+            self._refresh_listbox()
+        self.theme_btn.configure(text="☀ 浅色" if self.dark_mode else "🌙 深色")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._process_queue)
 
@@ -1127,7 +1137,35 @@ class JudgerApp:
         except Exception:
             pass
 
+    def _load_config(self):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            return cfg
+        except Exception:
+            return {}
+
+    def _save_config(self):
+        try:
+            os.makedirs(_CONFIG_DIR, exist_ok=True)
+            cfg = {
+                "geometry": self.root.geometry(),
+                "dark_mode": self.dark_mode,
+                "cpp_path": self.cpp_path.get(),
+                "gpp_path": self.gpp_path.get(),
+                "time_limit": self.time_limit.get(),
+                "mem_limit": self.mem_limit.get(),
+                "output_limit": self.output_limit.get(),
+                "std_var": self.std_var.get(),
+                "test_files": self.test_files,
+            }
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def _on_close(self):
+        self._save_config()
         if self.work_dir:
             self._cleanup_workdir(self.work_dir)
         self.root.destroy()
