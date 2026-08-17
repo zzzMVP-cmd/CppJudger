@@ -639,6 +639,11 @@ class JudgerApp:
         s.map("Small.TButton",
               background=[("active", c["border"]), ("!active", c["card"])],
               foreground=[("active", c["text_primary"]), ("!active", c["text_primary"])])
+        s.configure("FilterActive.TButton", font=("Microsoft YaHei UI", 9), padding=(8, 4),
+                    background=c["primary"], foreground="white")
+        s.map("FilterActive.TButton",
+              background=[("active", c["primary_hover"]), ("!active", c["primary"])],
+              foreground=[("active", "white"), ("!active", "white")])
 
         s.configure("TEntry", padding=(8, 6), fieldbackground=c["card"], foreground=c["text_primary"],
                     background=c["card"], bordercolor=c["border"], focuscolor=c["primary"])
@@ -768,8 +773,19 @@ class JudgerApp:
                                       font=("Microsoft YaHei UI", 9))
         self.summary_label.pack(side="right", padx=(8, 0))
 
+        self.filter_bar = ttk.Frame(card, style="Card.TFrame")
+        self.filter_bar.pack(fill="x", padx=16, pady=(8, 0))
+        _all_statuses = ["AC", "WA", "TLE", "MLE", "OLE", "RE"]
+        self.filter_set = set(_all_statuses)
+        self.filter_buttons = {}
+        for status in _all_statuses:
+            btn = ttk.Button(self.filter_bar, text=status, style="FilterActive.TButton", width=5,
+                             command=lambda s=status: self._toggle_filter(s))
+            btn.pack(side="left", padx=(0, 4))
+            self.filter_buttons[status] = btn
+
         result_wrap = ttk.Frame(card, style="Card.TFrame")
-        result_wrap.pack(fill="both", expand=True, padx=16, pady=(8, 12))
+        result_wrap.pack(fill="both", expand=True, padx=16, pady=(4, 12))
 
         self.result_canvas = tk.Canvas(result_wrap, highlightthickness=0, bg=self.c["bg"])
         self.result_vscroll = ttk.Scrollbar(result_wrap, orient="vertical", command=self.result_canvas.yview)
@@ -892,6 +908,15 @@ class JudgerApp:
         self.file_listbox.delete(0, tk.END)
 
     # ---------- 结果渲染 ----------
+    def _toggle_filter(self, status):
+        if status in self.filter_set:
+            self.filter_set.remove(status)
+            self.filter_buttons[status].configure(style="Small.TButton")
+        else:
+            self.filter_set.add(status)
+            self.filter_buttons[status].configure(style="FilterActive.TButton")
+        self._render_results()
+
     def _render_results(self):
         for w in self.result_inner.winfo_children():
             w.destroy()
@@ -924,6 +949,8 @@ class JudgerApp:
             err_text.config(state="disabled")
 
         for data in self.results_data:
+            if self.filter_set and data["status"] not in self.filter_set:
+                continue
             frame = TestResultFrame(self.result_inner, data, self.c)
             frame.pack(fill="x", pady=(0, 6), padx=4)
 
@@ -1099,8 +1126,9 @@ class JudgerApp:
             self._render_results()
         elif kind == "test_result":
             self.results_data.append(msg[1])
-            frame = TestResultFrame(self.result_inner, msg[1], self.c)
-            frame.pack(fill="x", pady=(0, 6), padx=4)
+            if not self.filter_set or msg[1]["status"] in self.filter_set:
+                frame = TestResultFrame(self.result_inner, msg[1], self.c)
+                frame.pack(fill="x", pady=(0, 6), padx=4)
         elif kind == "done":
             passed, total = msg[1], msg[2]
             self.summary_data = (passed, total)
@@ -1114,6 +1142,9 @@ class JudgerApp:
         self.results_data = []
         self.compile_error = None
         self.summary_data = None
+        self.filter_set = set(self.filter_buttons.keys())
+        for btn in self.filter_buttons.values():
+            btn.configure(style="FilterActive.TButton")
         self._render_results()
         self.status_label.config(text="")
 
