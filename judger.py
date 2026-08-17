@@ -483,56 +483,69 @@ class TestResultFrame(tk.Frame):
         d = self.data
         c = self.c
 
-        self.content = tk.Frame(self, bg=c["result_bg"])
+        self.content = tk.Frame(self, bg=c["card"])
 
-        self.text = tk.Text(self.content, wrap="none", font=("Consolas", 9),
-                            bg=c["result_bg"], fg=c["result_fg"],
-                            relief="flat", height=16, padx=8, pady=4,
-                            state="disabled", cursor="arrow",
-                            selectbackground=c["result_select"],
-                            selectforeground=c["result_fg"])
-        sb_y = ttk.Scrollbar(self.content, orient="vertical", command=self.text.yview)
-        sb_x = ttk.Scrollbar(self.content, orient="horizontal", command=self.text.xview)
-        self.text.configure(yscrollcommand=sb_y.set, xscrollcommand=sb_x.set)
-        sb_x.pack(side="bottom", fill="x")
-        sb_y.pack(side="right", fill="y")
-        self.text.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 8))
-
-        self.text.tag_configure("section", foreground=c["tag_header"],
-                                font=("Microsoft YaHei UI", 9, "bold"))
-        self.text.tag_configure("content", foreground=c["result_fg"])
-        self.text.tag_configure("diff_delete", foreground=c["diff_delete"])
-        self.text.tag_configure("diff_insert", foreground=c["diff_insert"])
-        self.text.tag_configure("diff_equal", foreground=c["result_fg"])
-
-        self.text.config(state="normal")
-
-        self._insert_section("输入", d.get("input_text", ""))
-        self._insert_section("预期输出", d.get("expected_text", ""))
-        self._insert_section("输出", d.get("actual_text", ""))
+        columns_data = [
+            ("输入", d.get("input_text", ""), None),
+            ("预期输出", d.get("expected_text", ""), None),
+            ("输出", d.get("actual_text", ""), None),
+        ]
 
         if d["status"] == "WA" and d.get("diff"):
             diff_text = "\n".join(f'{({"delete": "- ", "insert": "+ "}.get(tag, "  "))}{line}' for tag, line in d["diff"])
             if len(diff_text) > MAX_DISPLAY_LENGTH:
-                self.text.insert("end", "━━━ 差异比较 ━━━\n", "section")
-                self.text.insert("end", f"差异过长（{len(diff_text)} 字符），不显示。\n\n", "content")
+                columns_data.append(("差异比较", None, True))
             else:
-                self.text.insert("end", "━━━ 差异比较 ━━━\n", "section")
-                for tag, line in d["diff"]:
-                    prefix = {"delete": "- ", "insert": "+ "}.get(tag, "  ")
-                    ttag = {"delete": "diff_delete", "insert": "diff_insert"}.get(tag, "diff_equal")
-                    self.text.insert("end", f"{prefix}{line}\n", ttag)
+                columns_data.append(("差异比较", diff_text, False))
 
-        self.text.config(state="disabled")
+        for i in range(len(columns_data)):
+            self.content.columnconfigure(i, weight=1, uniform="col")
+        self.content.rowconfigure(0, weight=1)
 
-    def _insert_section(self, title, text):
-        self.text.insert("end", f"━━━ {title} ━━━\n", "section")
-        if not text:
-            self.text.insert("end", "(空)\n\n", "content")
-        elif len(text) > MAX_DISPLAY_LENGTH:
-            self.text.insert("end", f"文件过长（{len(text)} 字符），不显示。\n\n", "content")
-        else:
-            self.text.insert("end", text + "\n\n", "content")
+        for i, (title, text, is_diff_long) in enumerate(columns_data):
+            col_frame = tk.Frame(self.content, bg=c["result_bg"], highlightthickness=1,
+                                 highlightbackground=c["border"], bd=0)
+            col_frame.grid(row=0, column=i, sticky="nsew", padx=(10 if i == 0 else 2, 2), pady=(0, 8))
+
+            title_lbl = tk.Label(col_frame, text=title, bg=c["result_bg"], fg=c["tag_header"],
+                                  font=("Microsoft YaHei UI", 9, "bold"), anchor="w")
+            title_lbl.pack(fill="x", padx=6, pady=(4, 0))
+
+            txt = tk.Text(col_frame, wrap="char", font=("Consolas", 9),
+                          bg=c["result_bg"], fg=c["result_fg"],
+                          relief="flat", height=16, padx=6, pady=4,
+                          state="disabled", cursor="arrow",
+                          selectbackground=c["result_select"],
+                          selectforeground=c["result_fg"])
+            sb = ttk.Scrollbar(col_frame, orient="vertical", command=txt.yview)
+            txt.configure(yscrollcommand=sb.set)
+            sb.pack(side="right", fill="y")
+            txt.pack(fill="both", expand=True)
+
+            txt.tag_configure("content", foreground=c["result_fg"])
+            txt.tag_configure("diff_delete", foreground=c["diff_delete"])
+            txt.tag_configure("diff_insert", foreground=c["diff_insert"])
+            txt.tag_configure("diff_equal", foreground=c["result_fg"])
+
+            txt.config(state="normal")
+
+            if is_diff_long is True:
+                txt.insert("end", f"差异过长，不显示。", "content")
+            elif text is not None:
+                if not text:
+                    txt.insert("end", "(空)", "content")
+                elif len(text) > MAX_DISPLAY_LENGTH:
+                    txt.insert("end", f"文件过长（{len(text)} 字符），不显示。", "content")
+                else:
+                    if title == "差异比较":
+                        for tag, line in d["diff"]:
+                            prefix = {"delete": "- ", "insert": "+ "}.get(tag, "  ")
+                            ttag = {"delete": "diff_delete", "insert": "diff_insert"}.get(tag, "diff_equal")
+                            txt.insert("end", f"{prefix}{line}\n", ttag)
+                    else:
+                        txt.insert("end", text, "content")
+
+            txt.config(state="disabled")
 
     def toggle(self, event=None):
         if self.expanded:
@@ -540,7 +553,7 @@ class TestResultFrame(tk.Frame):
             self.arrow.config(text="▶")
             self.expanded = False
         else:
-            self.content.pack(fill="x", padx=10, pady=(0, 8))
+            self.content.pack(fill="both", expand=True, padx=10, pady=(0, 8))
             self.arrow.config(text="▼")
             self.expanded = True
 
