@@ -184,10 +184,11 @@ def compile_cpp(cpp_path, std_flag, gpp_path, out_exe):
 
 # ============================ 运行单个测试点 ============================
 
-def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
+def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb, output_limit_lines=0):
     mem_limit_bytes = mem_limit_mb * 1024 * 1024
     hard_time_ms = time_limit_ms * 1.2
     hard_mem_bytes = int(mem_limit_bytes * 1.2)
+    hard_output_lines = int(output_limit_lines * 1.2) if output_limit_lines > 0 else 0
 
     result = {
         "status": None,
@@ -232,14 +233,23 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
         kernel32.CloseHandle(hProc)
 
     stdout_chunks = []
+    output_line_count = 0
+    killed_by_output = False
 
     def reader():
+        nonlocal output_line_count, killed_by_output
         try:
             while True:
                 chunk = proc.stdout.read(65536)
                 if not chunk:
                     break
                 stdout_chunks.append(chunk)
+                if hard_output_lines > 0:
+                    output_line_count += chunk.count(b'\n')
+                    if output_line_count > hard_output_lines:
+                        killed_by_output = True
+                        kernel32.TerminateJobObject(hJob, 1)
+                        break
         except Exception:
             pass
 
@@ -251,6 +261,8 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
     killed_by_mem = False
 
     while proc.poll() is None:
+        if killed_by_output:
+            break
         elapsed_ms = qpc_ms() - start
         if elapsed_ms > hard_time_ms:
             kernel32.TerminateJobObject(hJob, 1)
@@ -277,6 +289,8 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
         result["status"] = "TLE"
     elif killed_by_mem:
         result["status"] = "MLE"
+    elif killed_by_output:
+        result["status"] = "OLE"
     elif proc.returncode != 0:
         result["status"] = "RE"
         result["re_detail"] = decode_exit_code(proc.returncode)
@@ -284,6 +298,8 @@ def run_test(exe_path, input_path, time_limit_ms, mem_limit_mb):
         result["status"] = "TLE"
     elif peak > mem_limit_bytes:
         result["status"] = "MLE"
+    elif output_limit_lines > 0 and output_line_count > output_limit_lines:
+        result["status"] = "OLE"
 
     kernel32.CloseHandle(hJob)
     return result
@@ -369,6 +385,7 @@ THEMES = {
         "tag_wa": "#f38ba8",
         "tag_tle": "#fab387",
         "tag_mle": "#cba6f7",
+        "tag_ole": "#f9e2af",
         "tag_re": "#f38ba8",
         "tag_ce": "#f38ba8",
         "tag_header": "#89b4fa",
@@ -398,6 +415,7 @@ THEMES = {
         "tag_wa": "#f38ba8",
         "tag_tle": "#fab387",
         "tag_mle": "#cba6f7",
+        "tag_ole": "#f9e2af",
         "tag_re": "#f38ba8",
         "tag_ce": "#f38ba8",
         "tag_header": "#89b4fa",
@@ -432,7 +450,7 @@ class TestResultFrame(tk.Frame):
         c = self.c
         status_colors = {
             "AC": c["tag_ac"], "WA": c["tag_wa"], "TLE": c["tag_tle"],
-            "MLE": c["tag_mle"], "RE": c["tag_re"], "CE": c["tag_ce"],
+            "MLE": c["tag_mle"], "OLE": c["tag_ole"], "RE": c["tag_re"], "CE": c["tag_ce"],
         }
         self.header = tk.Frame(self, bg=c["card"], cursor="hand2")
         self.header.pack(fill="x", padx=10, pady=8)
@@ -544,6 +562,7 @@ class JudgerApp:
         self.pairs = []
         self.time_limit = tk.StringVar(value="1000")
         self.mem_limit = tk.StringVar(value="256")
+        self.output_limit = tk.StringVar(value="256")
         self.std_var = tk.StringVar(value="C++14")
         self.gpp_path = tk.StringVar(value=DEFAULT_GPP)
 
@@ -692,10 +711,10 @@ class JudgerApp:
         row1 = ttk.Frame(body, style="Card.TFrame")
         row1.pack(fill="x", pady=(0, 8))
 
-        for label_text, var, width in [("时间限制", self.time_limit, 8), ("空间限制", self.mem_limit, 8)]:
+        for label_text, var, width in [("时间限制", self.time_limit, 8), ("空间限制", self.mem_limit, 8), ("输出上限", self.output_limit, 8)]:
             ttk.Label(row1, text=label_text, style="Card.TLabel").pack(side="left", padx=(0, 4))
             ttk.Entry(row1, textvariable=var, width=width, font=("Consolas", 10)).pack(side="left", padx=(0, 4))
-            unit = "ms" if "时间" in label_text else "MB"
+            unit = "ms" if "时间" in label_text else "MB" if "空间" in label_text else "行"
             ttk.Label(row1, text=unit, style="CardDim.TLabel").pack(side="left", padx=(0, 20))
 
         ttk.Label(row1, text="C++ 版本", style="Card.TLabel").pack(side="left", padx=(0, 4))
@@ -892,10 +911,11 @@ class JudgerApp:
         try:
             tl = int(self.time_limit.get())
             ml = int(self.mem_limit.get())
-            if tl <= 0 or ml <= 0:
+            ol = int(self.output_limit.get())
+            if tl <= 0 or ml <= 0 or ol <= 0:
                 raise ValueError
         except ValueError:
-            messagebox.showerror("错误", "时间限制与空间限制必须为正整数。")
+            messagebox.showerror("错误", "时间限制、空间限制与输出上限必须为正整数。")
             return
 
         parallel = os.cpu_count() or 4
@@ -918,11 +938,11 @@ class JudgerApp:
 
         threading.Thread(
             target=self._judge_worker,
-            args=(cpp, std_flag, gpp, tl, ml, list(self.pairs), parallel),
+            args=(cpp, std_flag, gpp, tl, ml, ol, list(self.pairs), parallel),
             daemon=True
         ).start()
 
-    def _judge_worker(self, cpp, std_flag, gpp, tl, ml, pairs, parallel):
+    def _judge_worker(self, cpp, std_flag, gpp, tl, ml, ol, pairs, parallel):
         work_dir = tempfile.mkdtemp(prefix="judger_")
         self.work_dir = work_dir
         exe_path = os.path.join(work_dir, "solution.exe")
@@ -938,7 +958,7 @@ class JudgerApp:
             self.queue.put(("status", "编译成功，开始评测…"))
 
             def run_single(i, inp, outp, name):
-                res = run_test(exe_path, inp, tl, ml)
+                res = run_test(exe_path, inp, tl, ml, ol)
 
                 input_text = ""
                 try:
