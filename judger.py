@@ -538,7 +538,8 @@ class TestResultFrame(tk.Frame):
                 if not text:
                     txt.insert("end", "(空)", "content")
                 elif len(text) > MAX_DISPLAY_LENGTH:
-                    txt.insert("end", f"文件过长（{len(text)} 字符），不显示。", "content")
+                    txt.insert("end", text[:MAX_DISPLAY_LENGTH], "content")
+                    txt.insert("end", f"\n\n…… 文件过长，已截断，共 {len(text)} 字符", "content")
                 else:
                     if title == "差异比较":
                         for tag, line in d["diff"]:
