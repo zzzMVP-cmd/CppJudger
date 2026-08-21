@@ -326,6 +326,33 @@ def compare_output(actual, expected):
     return normalize_text(actual) == normalize_text(expected)
 
 
+def compare_float(actual, expected, precision=6):
+    a_lines = normalize_text(actual)
+    e_lines = normalize_text(expected)
+    if len(a_lines) != len(e_lines):
+        return False
+    eps = 10 ** (-precision)
+    for a_line, e_line in zip(a_lines, e_lines):
+        a_tokens = a_line.split()
+        e_tokens = e_line.split()
+        if len(a_tokens) != len(e_tokens):
+            return False
+        for a_tok, e_tok in zip(a_tokens, e_tokens):
+            try:
+                a_val = float(a_tok)
+                e_val = float(e_tok)
+                if e_val != 0:
+                    if abs(a_val - e_val) / abs(e_val) > eps:
+                        return False
+                else:
+                    if abs(a_val) > eps:
+                        return False
+            except ValueError:
+                if a_tok != e_tok:
+                    return False
+    return True
+
+
 def compute_diff(expected_bytes, actual_bytes):
     e_lines = normalize_text(expected_bytes)
     a_lines = normalize_text(actual_bytes)
@@ -586,6 +613,9 @@ class JudgerApp:
         self.output_limit = tk.StringVar(value=cfg.get("output_limit", "256"))
         self.std_var = tk.StringVar(value=cfg.get("std_var", "C++14"))
         self.gpp_path = tk.StringVar(value=cfg.get("gpp_path", DEFAULT_GPP))
+        self.spj_enabled = tk.BooleanVar(value=False)
+        self.spj_mode = tk.StringVar(value=cfg.get("spj_mode", "float"))
+        self.spj_path = tk.StringVar(value=cfg.get("spj_path", ""))
 
         self.queue = queue.Queue()
         self.running = False
@@ -620,6 +650,38 @@ class JudgerApp:
         s.configure("Card.TFrame", background=c["card"])
         s.configure("TLabel", background=c["bg"], foreground=c["text_primary"], font=("Microsoft YaHei UI", 10))
         s.configure("Card.TLabel", background=c["card"], foreground=c["text_primary"], font=("Microsoft YaHei UI", 10))
+        s.configure("Card.TCheckbutton", background=c["card"], foreground=c["text_primary"],
+                    font=("Microsoft YaHei UI", 10))
+
+        cb_size = 14
+        cb_unchecked = tk.PhotoImage(width=cb_size, height=cb_size)
+        cb_checked = tk.PhotoImage(width=cb_size, height=cb_size)
+        for y in range(cb_size):
+            for x in range(cb_size):
+                cb_unchecked.put(c["border"], to=(x, y))
+                cb_checked.put(c["border"], to=(x, y))
+        for y in range(1, cb_size - 1):
+            for x in range(1, cb_size - 1):
+                cb_unchecked.put(c["card"], to=(x, y))
+                cb_checked.put(c["primary"], to=(x, y))
+        for pt in [(3,9),(4,8),(4,9),(5,7),(5,8),(6,6),(6,7),(7,5),(7,6),(8,4),(8,5),(9,3),(9,4),(10,3)]:
+            cb_checked.put("white", to=pt)
+
+        self._cb_unchecked = cb_unchecked
+        self._cb_checked = cb_checked
+
+        elem_name = "Card.Checkbutton.indicator"
+        existing = s.element_names()
+        if elem_name not in existing:
+            s.element_create(elem_name, "image", cb_unchecked,
+                             ("selected", cb_checked), sticky="w", width=cb_size)
+        s.layout("Card.TCheckbutton",
+                 [(elem_name, {"side": "left"}),
+                  ("Checkbutton.focus", {"children":
+                      [("Checkbutton.label", {"side": "left"})]})])
+        s.map("Card.TCheckbutton",
+              background=[("active", c["card"]), ("!active", c["card"])],
+              foreground=[("active", c["text_primary"]), ("!active", c["text_primary"])])
         s.configure("Dim.TLabel", background=c["bg"], foreground=c["text_secondary"], font=("Microsoft YaHei UI", 9))
         s.configure("CardDim.TLabel", background=c["card"], foreground=c["text_secondary"], font=("Microsoft YaHei UI", 9))
         s.configure("Title.TLabel", background=c["bg"], foreground=c["text_primary"], font=("Microsoft YaHei UI", 16, "bold"))
@@ -638,8 +700,8 @@ class JudgerApp:
         s.configure("Small.TButton", font=("Microsoft YaHei UI", 9), padding=(8, 4),
                     background=c["card"], foreground=c["text_primary"])
         s.map("Small.TButton",
-              background=[("active", c["border"]), ("!active", c["card"])],
-              foreground=[("active", c["text_primary"]), ("!active", c["text_primary"])])
+              background=[("active", c["border"]), ("!active", c["card"]), ("disabled", c["bg"])],
+              foreground=[("active", c["text_primary"]), ("!active", c["text_primary"]), ("disabled", c["text_secondary"])])
         s.configure("FilterActive.TButton", font=("Microsoft YaHei UI", 9), padding=(8, 4),
                     background=c["primary"], foreground="white")
         s.map("FilterActive.TButton",
@@ -648,12 +710,15 @@ class JudgerApp:
 
         s.configure("TEntry", padding=(8, 6), fieldbackground=c["card"], foreground=c["text_primary"],
                     background=c["card"], bordercolor=c["border"], focuscolor=c["primary"])
+        s.map("TEntry",
+              fieldbackground=[("disabled", c["bg"])],
+              foreground=[("disabled", c["text_secondary"])])
         s.configure("TCombobox", padding=(8, 6), fieldbackground=c["card"], foreground=c["text_primary"],
                     background=c["card"], bordercolor=c["border"], focuscolor=c["primary"],
                     selectbackground=c["primary"], selectforeground="white")
         s.map("TCombobox",
-              fieldbackground=[("readonly", c["card"])],
-              foreground=[("readonly", c["text_primary"])],
+              fieldbackground=[("readonly", c["card"]), ("disabled", c["bg"])],
+              foreground=[("readonly", c["text_primary"]), ("disabled", c["text_secondary"])],
               selectbackground=[("readonly", c["primary"])],
               selectforeground=[("readonly", "white")])
 
@@ -755,6 +820,24 @@ class JudgerApp:
         ttk.Label(row2, text="编译器", style="Card.TLabel").pack(side="left", padx=(0, 4))
         ttk.Entry(row2, textvariable=self.gpp_path, font=("Consolas", 9)).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ttk.Button(row2, text="浏览", style="Small.TButton", command=self.choose_gpp).pack(side="right")
+
+        row3 = ttk.Frame(body, style="Card.TFrame")
+        row3.pack(fill="x", pady=(8, 0))
+        ttk.Checkbutton(row3, text="Special Judge", variable=self.spj_enabled,
+                        style="Card.TCheckbutton", command=self._on_spj_toggle).pack(side="left", padx=(0, 8))
+        ttk.Label(row3, text="模式", style="Card.TLabel").pack(side="left", padx=(0, 4))
+        self.spj_mode_combo = ttk.Combobox(row3, textvariable=self.spj_mode,
+                                           values=["float", "自定义"], width=8,
+                                           state="readonly", font=("Consolas", 10))
+        self.spj_mode_combo.pack(side="left", padx=(0, 8))
+        self.spj_mode_combo.bind("<<ComboboxSelected>>", self._on_spj_mode_change)
+
+        self.spj_path_frame = ttk.Frame(row3, style="Card.TFrame")
+        self.spj_path_frame.pack(side="left", fill="x", expand=True, padx=(0, 0))
+        ttk.Entry(self.spj_path_frame, textvariable=self.spj_path, font=("Consolas", 9)).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Button(self.spj_path_frame, text="浏览", style="Small.TButton", command=self.choose_spj).pack(side="right")
+
+        self._on_spj_toggle()
 
     def _build_action_bar(self, parent):
         bar = ttk.Frame(parent)
@@ -867,6 +950,29 @@ class JudgerApp:
         )
         if p:
             self.gpp_path.set(p)
+
+    def choose_spj(self):
+        p = filedialog.askopenfilename(
+            title="选择 checker 程序",
+            filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")]
+        )
+        if p:
+            self.spj_path.set(p)
+
+    def _on_spj_toggle(self):
+        enabled = self.spj_enabled.get()
+        state = "readonly" if enabled else "disabled"
+        self.spj_mode_combo.configure(state=state)
+        self._on_spj_mode_change()
+
+    def _on_spj_mode_change(self, event=None):
+        enabled = self.spj_enabled.get()
+        is_custom = self.spj_mode.get() == "自定义"
+        for child in self.spj_path_frame.winfo_children():
+            try:
+                child.configure(state="normal" if (enabled and is_custom) else "disabled")
+            except Exception:
+                pass
 
     def choose_tests(self):
         ps = filedialog.askopenfilenames(
@@ -1014,6 +1120,10 @@ class JudgerApp:
         self.work_dir = work_dir
         exe_path = os.path.join(work_dir, "solution.exe")
 
+        spj_enabled = self.spj_enabled.get()
+        spj_mode = self.spj_mode.get()
+        spj_path = self.spj_path.get().strip() if spj_mode == "自定义" else ""
+
         try:
             self.queue.put(("status", "正在编译…"))
             code, out, err = compile_cpp(cpp, std_flag, gpp, exe_path)
@@ -1047,10 +1157,32 @@ class JudgerApp:
                 actual_text = actual_bytes.decode("utf-8", errors="replace") if actual_bytes else ""
 
                 if res["status"] is None:
-                    if compare_output(actual_bytes, expected_bytes):
-                        res["status"] = "AC"
+                    if spj_enabled and spj_mode == "float":
+                        if compare_float(actual_bytes, expected_bytes):
+                            res["status"] = "AC"
+                        else:
+                            res["status"] = "WA"
+                    elif spj_enabled and spj_mode == "自定义" and spj_path and os.path.isfile(spj_path):
+                        try:
+                            spj_proc = subprocess.run(
+                                [spj_path, inp, outp],
+                                input=actual_bytes,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                timeout=10,
+                                creationflags=CREATE_NO_WINDOW,
+                            )
+                            if spj_proc.returncode == 0:
+                                res["status"] = "AC"
+                            else:
+                                res["status"] = "WA"
+                        except Exception:
+                            res["status"] = "WA"
                     else:
-                        res["status"] = "WA"
+                        if compare_output(actual_bytes, expected_bytes):
+                            res["status"] = "AC"
+                        else:
+                            res["status"] = "WA"
 
                 diff = None
                 if res["status"] == "WA":
@@ -1190,6 +1322,9 @@ class JudgerApp:
                 "output_limit": self.output_limit.get(),
                 "std_var": self.std_var.get(),
                 "test_files": self.test_files,
+                "spj_enabled": self.spj_enabled.get(),
+                "spj_mode": self.spj_mode.get(),
+                "spj_path": self.spj_path.get(),
             }
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
