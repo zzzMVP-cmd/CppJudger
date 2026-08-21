@@ -537,9 +537,31 @@ class TestResultFrame(tk.Frame):
                                  highlightbackground=c["border"], bd=0)
             col_frame.grid(row=0, column=i, sticky="nsew", padx=(10 if i == 0 else 2, 2), pady=(0, 8))
 
-            title_lbl = tk.Label(col_frame, text=title, bg=c["result_bg"], fg=c["tag_header"],
+            title_bar = tk.Frame(col_frame, bg=c["result_bg"])
+            title_bar.pack(fill="x", padx=6, pady=(4, 0))
+
+            title_lbl = tk.Label(title_bar, text=title, bg=c["result_bg"], fg=c["tag_header"],
                                   font=("Microsoft YaHei UI", 9, "bold"), anchor="w")
-            title_lbl.pack(fill="x", padx=6, pady=(4, 0))
+            title_lbl.pack(side="left")
+
+            if is_diff_long is True:
+                full_text = ""
+            elif text is not None:
+                if not text:
+                    full_text = ""
+                elif title == "差异比较":
+                    full_text = diff_text
+                else:
+                    full_text = text
+            else:
+                full_text = ""
+
+            copy_btn = tk.Label(title_bar, text="复制", bg=c["result_bg"], fg=c["text_secondary"],
+                                font=("Microsoft YaHei UI", 8), cursor="hand2", padx=4, pady=1)
+            copy_btn.pack(side="right")
+            copy_btn.bind("<Button-1>", lambda e, t=full_text, b=copy_btn: self._copy_text(t, b))
+            copy_btn.bind("<Enter>", lambda e, w=copy_btn: w.config(fg=c["primary"]))
+            copy_btn.bind("<Leave>", lambda e, w=copy_btn: w.config(fg=c["text_secondary"]))
 
             txt = tk.Text(col_frame, wrap="char", font=("Consolas", 9),
                           bg=c["result_bg"], fg=c["result_fg"],
@@ -577,6 +599,12 @@ class TestResultFrame(tk.Frame):
                         txt.insert("end", text, "content")
 
             txt.config(state="disabled")
+
+    def _copy_text(self, text, btn):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        btn.config(text="复制成功", fg=self.c["tag_ac"])
+        self.after(1000, lambda: btn.config(text="复制", fg=self.c["text_secondary"]))
 
     def toggle(self, event=None):
         if self.expanded:
@@ -1140,7 +1168,7 @@ class JudgerApp:
                 input_text = ""
                 try:
                     with open(inp, "r", encoding="utf-8", errors="replace") as f:
-                        input_text = f.read()
+                        input_text = f.read().replace("\r\n", "\n").replace("\r", "\n")
                 except Exception:
                     input_text = "(无法读取)"
 
@@ -1149,12 +1177,12 @@ class JudgerApp:
                 try:
                     with open(outp, "rb") as f:
                         expected_bytes = f.read()
-                    expected_text = expected_bytes.decode("utf-8", errors="replace")
+                    expected_text = expected_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
                 except Exception:
                     expected_text = "(无法读取)"
 
                 actual_bytes = res["output"]
-                actual_text = actual_bytes.decode("utf-8", errors="replace") if actual_bytes else ""
+                actual_text = actual_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n") if actual_bytes else ""
 
                 if res["status"] is None:
                     if spj_enabled and spj_mode == "float":
