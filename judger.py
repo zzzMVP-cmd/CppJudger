@@ -29,6 +29,12 @@ import difflib
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    HAS_DND = True
+except ImportError:
+    HAS_DND = False
+
 # ============================ Windows Job Object ============================
 
 kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -797,7 +803,8 @@ class JudgerApp:
         row1 = ttk.Frame(body, style="Card.TFrame")
         row1.pack(fill="x", pady=(0, 8))
         ttk.Label(row1, text="源文件", style="Card.TLabel", width=8).pack(side="left")
-        ttk.Label(row1, textvariable=self.cpp_path, style="Path.TLabel").pack(side="left", fill="x", expand=True, padx=(8, 8))
+        self.cpp_path_label = ttk.Label(row1, textvariable=self.cpp_path, style="Path.TLabel")
+        self.cpp_path_label.pack(side="left", fill="x", expand=True, padx=(8, 8))
         ttk.Button(row1, text="选择", style="Small.TButton", command=self.choose_cpp).pack(side="right")
 
         self.sep_frame = tk.Frame(body, height=1)
@@ -825,6 +832,12 @@ class JudgerApp:
         ttk.Button(btn_col, text="添加", style="Small.TButton", command=self.choose_tests).pack(pady=(0, 4))
         ttk.Button(btn_col, text="删除", style="Small.TButton", command=self.delete_tests).pack(pady=(0, 4))
         ttk.Button(btn_col, text="清空", style="Small.TButton", command=self.clear_tests).pack()
+
+        if HAS_DND:
+            self.cpp_path_label.drop_target_register(DND_FILES)
+            self.cpp_path_label.dnd_bind('<<Drop>>', self._on_drop_cpp)
+            self.file_listbox.drop_target_register(DND_FILES)
+            self.file_listbox.dnd_bind('<<Drop>>', self._on_drop_tests)
 
     def _build_option_card(self, parent):
         card, body, _ = self._card_frame(parent, "评测选项")
@@ -862,10 +875,15 @@ class JudgerApp:
 
         self.spj_path_frame = ttk.Frame(row3, style="Card.TFrame")
         self.spj_path_frame.pack(side="left", fill="x", expand=True, padx=(0, 0))
-        ttk.Entry(self.spj_path_frame, textvariable=self.spj_path, font=("Consolas", 9)).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.spj_entry = ttk.Entry(self.spj_path_frame, textvariable=self.spj_path, font=("Consolas", 9))
+        self.spj_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         ttk.Button(self.spj_path_frame, text="浏览", style="Small.TButton", command=self.choose_spj).pack(side="right")
 
         self._on_spj_toggle()
+
+        if HAS_DND:
+            self.spj_entry.drop_target_register(DND_FILES)
+            self.spj_entry.dnd_bind('<<Drop>>', self._on_drop_spj)
 
     def _build_action_bar(self, parent):
         bar = ttk.Frame(parent)
@@ -986,6 +1004,53 @@ class JudgerApp:
         )
         if p:
             self.spj_path.set(p)
+
+    def _on_drop_cpp(self, event):
+        paths = self._parse_drop_paths(event.data)
+        for p in paths:
+            if p.lower().endswith((".cpp", ".cc", ".cxx", ".c")):
+                self.cpp_path.set(os.path.normpath(p))
+                break
+
+    def _on_drop_tests(self, event):
+        paths = self._parse_drop_paths(event.data)
+        new_files = [os.path.normpath(p) for p in paths if p.lower().endswith((".in", ".out", ".ans"))]
+        if new_files:
+            existing = {f.lower() for f in self.test_files}
+            for f in new_files:
+                if f.lower() not in existing:
+                    self.test_files.append(f)
+            self.pairs = pair_test_files(self.test_files)
+            self._refresh_listbox()
+
+    def _on_drop_spj(self, event):
+        paths = self._parse_drop_paths(event.data)
+        for p in paths:
+            if p.lower().endswith((".exe", ".py")):
+                self.spj_path.set(os.path.normpath(p))
+                break
+
+    def _parse_drop_paths(self, data):
+        paths = []
+        current = ""
+        i = 0
+        while i < len(data):
+            c = data[i]
+            if c == '{':
+                end = data.index('}', i)
+                paths.append(data[i + 1:end])
+                i = end + 1
+            elif c == ' ':
+                if current:
+                    paths.append(current)
+                    current = ""
+                i += 1
+            else:
+                current += c
+                i += 1
+        if current:
+            paths.append(current)
+        return paths
 
     def _on_spj_toggle(self):
         enabled = self.spj_enabled.get()
@@ -1126,6 +1191,15 @@ class JudgerApp:
             messagebox.showerror("错误", f"找不到编译器：{gpp}")
             return
 
+        if self.spj_enabled.get() and self.spj_mode.get() == "自定义":
+            spj_path = self.spj_path.get().strip()
+            if not spj_path:
+                messagebox.showerror("错误", "Special Judge 已启用，请指定 checker 文件路径。")
+                return
+            if not os.path.isfile(spj_path):
+                messagebox.showerror("错误", f"找不到 checker 文件：\n{spj_path}")
+                return
+
         std_map = {"C++11": "c++11", "C++14": "c++14", "C++20": "c++20", "C++23": "c++23"}
         std_flag = std_map.get(self.std_var.get(), "c++14")
 
@@ -1190,12 +1264,18 @@ class JudgerApp:
                             res["status"] = "AC"
                         else:
                             res["status"] = "WA"
-                    elif spj_enabled and spj_mode == "自定义" and spj_path and os.path.isfile(spj_path):
+                    elif spj_enabled and spj_mode == "自定义" and spj_path:
+                        spj_debug = ""
                         try:
                             if spj_path.lower().endswith(".py"):
-                                spj_cmd = [sys.executable, spj_path, inp, outp]
+                                if not getattr(sys, 'frozen', False):
+                                    python_exe = sys.executable
+                                else:
+                                    python_exe = shutil.which("python") or shutil.which("python3") or "python"
+                                spj_cmd = [python_exe, spj_path, inp, outp]
                             else:
                                 spj_cmd = [spj_path, inp, outp]
+                            spj_debug = f"SPJ 命令: {' '.join(spj_cmd)}\nSPJ 输入大小: {len(actual_bytes)} 字节"
                             spj_proc = subprocess.run(
                                 spj_cmd,
                                 input=actual_bytes,
@@ -1204,12 +1284,28 @@ class JudgerApp:
                                 timeout=10,
                                 creationflags=CREATE_NO_WINDOW,
                             )
+                            spj_debug += f"\nSPJ 返回码: {spj_proc.returncode}"
+                            spj_stdout = spj_proc.stdout.decode("utf-8", errors="replace").strip()
+                            spj_stderr = spj_proc.stderr.decode("utf-8", errors="replace").strip()
+                            if spj_stdout:
+                                spj_debug += f"\nSPJ stdout:\n{spj_stdout}"
+                            if spj_stderr:
+                                spj_debug += f"\nSPJ stderr:\n{spj_stderr}"
                             if spj_proc.returncode == 0:
                                 res["status"] = "AC"
                             else:
                                 res["status"] = "WA"
-                        except Exception:
+                        except FileNotFoundError:
                             res["status"] = "WA"
+                            target = python_exe if spj_path.lower().endswith(".py") else spj_path
+                            spj_debug += f"\nSPJ 错误: 找不到可执行文件：{target}"
+                        except subprocess.TimeoutExpired:
+                            res["status"] = "WA"
+                            spj_debug += "\nSPJ 错误: 运行超时（10 秒）"
+                        except Exception as e:
+                            res["status"] = "WA"
+                            spj_debug += f"\nSPJ 错误: 运行异常：{e}"
+                        actual_text = actual_text + "\n\n[SPJ 调试信息]\n" + spj_debug
                     else:
                         if compare_output(actual_bytes, expected_bytes):
                             res["status"] = "AC"
@@ -1283,25 +1379,29 @@ class JudgerApp:
         self.root.after(100, self._process_queue)
 
     def _handle_msg(self, msg):
-        kind = msg[0]
-        if kind == "status":
-            self.status_label.config(text=msg[1])
-        elif kind == "compile_error":
-            self.compile_error = msg[1]
-            self._render_results()
-        elif kind == "test_result":
-            self.results_data.append(msg[1])
-            if not self.filter_set or msg[1]["status"] in self.filter_set:
-                frame = TestResultFrame(self.result_inner, msg[1], self.c)
-                frame.pack(fill="x", pady=(0, 6), padx=4)
-        elif kind == "done":
-            passed, total = msg[1], msg[2]
-            self.summary_data = (passed, total)
-            tag = "tag_ac" if passed == total else "tag_wa"
-            self.summary_label.config(text=f"{passed}/{total} 通过", fg=self.c[tag])
-            self.running = False
-            self.start_btn.config(state="normal")
-            self.status_label.config(text=f"完成  {passed}/{total} 通过")
+        try:
+            kind = msg[0]
+            if kind == "status":
+                self.status_label.config(text=msg[1])
+            elif kind == "compile_error":
+                self.compile_error = msg[1]
+                self._render_results()
+            elif kind == "test_result":
+                self.results_data.append(msg[1])
+                if not self.filter_set or msg[1]["status"] in self.filter_set:
+                    frame = TestResultFrame(self.result_inner, msg[1], self.c)
+                    frame.pack(fill="x", pady=(0, 6), padx=4)
+            elif kind == "done":
+                passed, total = msg[1], msg[2]
+                self.summary_data = (passed, total)
+                tag = "tag_ac" if passed == total else "tag_wa"
+                self.summary_label.config(text=f"{passed}/{total} 通过", fg=self.c[tag])
+                self.running = False
+                self.start_btn.config(state="normal")
+                self.status_label.config(text=f"完成  {passed}/{total} 通过")
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     def clear_result(self):
         self.results_data = []
@@ -1371,7 +1471,10 @@ class JudgerApp:
 
 
 def main():
-    root = tk.Tk()
+    if HAS_DND:
+        root = TkinterDnD.Tk()
+    else:
+        root = tk.Tk()
     JudgerApp(root)
     root.mainloop()
 
