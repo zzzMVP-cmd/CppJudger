@@ -982,7 +982,7 @@ class JudgerApp:
     def choose_spj(self):
         p = filedialog.askopenfilename(
             title="选择 checker 程序",
-            filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")]
+            filetypes=[("可执行文件", "*.exe"), ("Python 脚本", "*.py"), ("所有文件", "*.*")]
         )
         if p:
             self.spj_path.set(p)
@@ -1192,8 +1192,12 @@ class JudgerApp:
                             res["status"] = "WA"
                     elif spj_enabled and spj_mode == "自定义" and spj_path and os.path.isfile(spj_path):
                         try:
+                            if spj_path.lower().endswith(".py"):
+                                spj_cmd = [sys.executable, spj_path, inp, outp]
+                            else:
+                                spj_cmd = [spj_path, inp, outp]
                             spj_proc = subprocess.run(
-                                [spj_path, inp, outp],
+                                spj_cmd,
                                 input=actual_bytes,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
@@ -1213,7 +1217,7 @@ class JudgerApp:
                             res["status"] = "WA"
 
                 diff = None
-                if res["status"] == "WA":
+                if res["status"] == "WA" and not spj_enabled:
                     diff = compute_diff(expected_bytes, actual_bytes)
 
                 return {

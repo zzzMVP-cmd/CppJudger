@@ -31,7 +31,7 @@ CppJudger 是一个为算法竞赛而设计的本地手动评测器。
 7. **C++ 版本**：可选 C++11 / C++14（默认） / C++20 / C++23
 8. **Special Judge**：勾选后启用，模式可选：
    - `float`：浮点误差比较，逐 token 比较数值，相对误差 ≤ 10⁻⁶ 视为相等，非数值 token 需精确匹配
-   - `自定义`：选择一个 checker 程序（.exe），checker 接收命令行参数 `checker <input> <expected_output>`，通过 stdin 接收实际输出，返回 0 表示 AC，非 0 表示 WA
+   - `自定义`：选择一个 checker 程序（.exe 或 .py），checker 接收命令行参数 `checker <input> <expected_output>`，通过 stdin 接收实际输出，返回 0 表示 AC，非 0 表示 WA
 
 选择完成后，点击 **"开始评测"** 按钮即可开始评测。
 
