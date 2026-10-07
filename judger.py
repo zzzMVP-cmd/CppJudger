@@ -13,6 +13,7 @@ C++ Judger - 本地测评工具
 import os
 import sys
 import json
+import re
 import time
 import locale
 import tempfile
@@ -385,20 +386,59 @@ def compute_diff(expected_bytes, actual_bytes):
 # ============================ 测评点配对 ============================
 
 def pair_test_files(file_paths):
-    groups = defaultdict(dict)
+    groups = defaultdict(lambda: {"in": None, "outs": []})
     for p in file_paths:
         stem, ext = os.path.splitext(p)
         ext = ext.lower()
+        name = os.path.basename(stem)
+
         if ext == ".in":
             groups[stem]["in"] = p
         elif ext in (".out", ".ans"):
-            groups[stem]["out"] = p
+            groups[stem]["outs"].append(p)
+        elif ext == ".txt":
+            m_in = re.match(r'^in(\d+)$', name, re.IGNORECASE)
+            m_out = re.match(r'^(?:out|ans)(\d+)$', name, re.IGNORECASE)
+            if m_in:
+                groups["__txt__" + m_in.group(1)]["in"] = p
+            elif m_out:
+                groups["__txt__" + m_out.group(1)]["outs"].append(p)
     pairs = []
-    for stem in sorted(groups.keys()):
-        g = groups[stem]
-        if "in" in g and "out" in g:
-            pairs.append((g["in"], g["out"], os.path.basename(stem)))
-    return pairs
+    unmatched = []
+    for key in sorted(groups.keys()):
+        g = groups[key]
+        inp = g["in"]
+        outs = g["outs"]
+        if inp and len(outs) == 1:
+            if key.startswith("__txt__"):
+                display = f"测试点{key[7:]}"
+            else:
+                display = os.path.basename(key)
+            pairs.append((inp, outs[0], display))
+        else:
+            if inp:
+                unmatched.append(inp)
+            unmatched.extend(outs)
+    return pairs, unmatched
+
+
+def _classify_file(filepath):
+    """返回 (key, type) 或 (None, None)，type 为 'in' 或 'out'"""
+    stem, ext = os.path.splitext(filepath)
+    ext = ext.lower()
+    name = os.path.basename(stem)
+    if ext == ".in":
+        return (stem, "in")
+    elif ext in (".out", ".ans"):
+        return (stem, "out")
+    elif ext == ".txt":
+        m_in = re.match(r'^in(\d+)$', name, re.IGNORECASE)
+        if m_in:
+            return ("__txt__" + m_in.group(1), "in")
+        m_out = re.match(r'^(?:out|ans)(\d+)$', name, re.IGNORECASE)
+        if m_out:
+            return ("__txt__" + m_out.group(1), "out")
+    return (None, None)
 
 
 # ============================ 主题配色 ============================
@@ -641,7 +681,8 @@ class JudgerApp:
 
         self.cpp_path = tk.StringVar(value=cfg.get("cpp_path", "未选择"))
         self.test_files = cfg.get("test_files", [])
-        self.pairs = pair_test_files(self.test_files) if self.test_files else []
+        self.pairs, self.unmatched = pair_test_files(self.test_files) if self.test_files else ([], [])
+        self.manual_pairs = cfg.get("manual_pairs", [])
         self.time_limit = tk.StringVar(value=cfg.get("time_limit", "1000"))
         self.mem_limit = tk.StringVar(value=cfg.get("mem_limit", "256"))
         self.output_limit = tk.StringVar(value=cfg.get("output_limit", "256"))
@@ -831,7 +872,8 @@ class JudgerApp:
         btn_col.pack(side="right", anchor="n")
         ttk.Button(btn_col, text="添加", style="Small.TButton", command=self.choose_tests).pack(pady=(0, 4))
         ttk.Button(btn_col, text="删除", style="Small.TButton", command=self.delete_tests).pack(pady=(0, 4))
-        ttk.Button(btn_col, text="清空", style="Small.TButton", command=self.clear_tests).pack()
+        ttk.Button(btn_col, text="清空", style="Small.TButton", command=self.clear_tests).pack(pady=(0, 4))
+        ttk.Button(btn_col, text="匹配", style="Small.TButton", command=self.match_tests).pack()
 
         if HAS_DND:
             self.cpp_path_label.drop_target_register(DND_FILES)
@@ -972,6 +1014,7 @@ class JudgerApp:
         self.result_canvas.configure(bg=c["bg"])
         self.result_inner.configure(bg=c["bg"])
         self.summary_label.configure(bg=c["card"], fg=c["text_secondary"])
+        self._refresh_listbox()
         self._render_results()
 
     def toggle_theme(self):
@@ -1020,7 +1063,7 @@ class JudgerApp:
             for f in new_files:
                 if f.lower() not in existing:
                     self.test_files.append(f)
-            self.pairs = pair_test_files(self.test_files)
+            self.pairs, self.unmatched = pair_test_files(self.test_files)
             self._refresh_listbox()
 
     def _on_drop_spj(self, event):
@@ -1076,13 +1119,18 @@ class JudgerApp:
             existing = set(self.test_files)
             new_files = [p for p in ps if p not in existing]
             self.test_files.extend(new_files)
-            self.pairs = pair_test_files(self.test_files)
+            self.pairs, self.unmatched = pair_test_files(self.test_files)
             self._refresh_listbox()
 
     def delete_tests(self):
         sel = self.file_listbox.curselection()
         if not sel:
             return
+        manual_files = set()
+        for inp, outp, _ in self.manual_pairs:
+            manual_files.add(inp)
+            manual_files.add(outp)
+        visible_unmatched = [f for f in self.unmatched if f not in manual_files]
         indices = sorted(sel, reverse=True)
         for idx in indices:
             if 0 <= idx < len(self.pairs):
@@ -1091,21 +1139,115 @@ class JudgerApp:
                     self.test_files.remove(inp)
                 if outp in self.test_files:
                     self.test_files.remove(outp)
-        self.pairs = pair_test_files(self.test_files)
+            elif idx < len(self.pairs) + len(self.manual_pairs):
+                mi = idx - len(self.pairs)
+                inp, outp, _ = self.manual_pairs[mi]
+                if inp in self.test_files:
+                    self.test_files.remove(inp)
+                if outp in self.test_files:
+                    self.test_files.remove(outp)
+                del self.manual_pairs[mi]
+            else:
+                unmatched_idx = idx - len(self.pairs) - len(self.manual_pairs)
+                if 0 <= unmatched_idx < len(visible_unmatched):
+                    f = visible_unmatched[unmatched_idx]
+                    if f in self.test_files:
+                        self.test_files.remove(f)
+        self.pairs, self.unmatched = pair_test_files(self.test_files)
         self._refresh_listbox()
 
     def _refresh_listbox(self):
         self.file_listbox.delete(0, tk.END)
         for inp, outp, name in self.pairs:
             self.file_listbox.insert(tk.END, f"{name}  (in: {os.path.basename(inp)} | out: {os.path.basename(outp)})")
-        unpaired = len(self.test_files) - len(self.pairs) * 2
-        if unpaired > 0:
-            self.file_listbox.insert(tk.END, f"[警告] {unpaired} 个文件未能配对")
+        for inp, outp, name in self.manual_pairs:
+            self.file_listbox.insert(tk.END, f"[手动] {name}  (in: {os.path.basename(inp)} | out: {os.path.basename(outp)})")
+            item_idx = self.file_listbox.size() - 1
+            self.file_listbox.itemconfig(item_idx, fg=self.c["tag_ac"])
+        manual_files = set()
+        for inp, outp, _ in self.manual_pairs:
+            manual_files.add(inp)
+            manual_files.add(outp)
+        for f in self.unmatched:
+            if f in manual_files:
+                continue
+            self.file_listbox.insert(tk.END, f"[未匹配] {os.path.basename(f)}  ({f})")
+            item_idx = self.file_listbox.size() - 1
+            self.file_listbox.itemconfig(item_idx, fg=self.c["tag_wa"])
 
     def clear_tests(self):
         self.test_files = []
         self.pairs = []
+        self.unmatched = []
+        self.manual_pairs = []
         self.file_listbox.delete(0, tk.END)
+
+    def match_tests(self):
+        """将选中的未匹配文件按名称自动配对"""
+        manual_files = set()
+        for inp, outp, _ in self.manual_pairs:
+            manual_files.add(inp)
+            manual_files.add(outp)
+        visible_unmatched = [f for f in self.unmatched if f not in manual_files]
+
+        sel = self.file_listbox.curselection()
+        if not sel:
+            messagebox.showinfo("提示", "请在列表中选中要匹配的 [未匹配] 文件。")
+            return
+
+        unmatched_offset = len(self.pairs) + len(self.manual_pairs)
+        selected_files = []
+        for idx in sel:
+            ui = idx - unmatched_offset
+            if 0 <= ui < len(visible_unmatched):
+                selected_files.append(visible_unmatched[ui])
+
+        if not selected_files:
+            messagebox.showinfo("提示", "请选中未匹配的文件（标记为 [未匹配] 的项）。")
+            return
+
+        groups = defaultdict(lambda: {"in": None, "outs": []})
+        for f in selected_files:
+            key, ftype = _classify_file(f)
+            if key is None:
+                messagebox.showwarning("匹配失败", f"无法识别文件类型：{os.path.basename(f)}")
+                return
+            if ftype == "in":
+                groups[key]["in"] = f
+            else:
+                groups[key]["outs"].append(f)
+
+        new_pairs = []
+        for key, g in groups.items():
+            inp = g["in"]
+            outs = g["outs"]
+            if inp and len(outs) == 1:
+                new_pairs.append((inp, outs[0], key))
+            else:
+                files_in_group = []
+                if inp:
+                    files_in_group.append(os.path.basename(inp))
+                files_in_group.extend(os.path.basename(o) for o in outs)
+                names = "、".join(files_in_group)
+                if not inp:
+                    messagebox.showwarning("匹配失败", f"缺少对应的输入文件：{names}")
+                elif not outs:
+                    messagebox.showwarning("匹配失败", f"缺少对应的输出文件：{names}")
+                else:
+                    messagebox.showwarning("匹配失败", f"存在多个输出文件，无法确定与哪个配对：{names}")
+                return
+
+        for inp_path, out_path, key in new_pairs:
+            if key.startswith("__txt__"):
+                display = f"测试点{key[7:]}"
+            else:
+                display = os.path.basename(key)
+            self.manual_pairs.append((inp_path, out_path, display))
+            if inp_path in self.test_files:
+                self.test_files.remove(inp_path)
+            if out_path in self.test_files:
+                self.test_files.remove(out_path)
+        self._refresh_listbox()
 
     # ---------- 结果渲染 ----------
     def _toggle_filter(self, status):
@@ -1171,7 +1313,7 @@ class JudgerApp:
         if not cpp or cpp == "未选择" or not os.path.isfile(cpp):
             messagebox.showerror("错误", "请先选择有效的 C++ 源文件。")
             return
-        if not self.pairs:
+        if not self.pairs and not self.manual_pairs:
             messagebox.showerror("错误", "请先选择测评点文件（需包含配对的 .in 与 .out/.ans）。")
             return
         try:
@@ -1213,7 +1355,7 @@ class JudgerApp:
 
         threading.Thread(
             target=self._judge_worker,
-            args=(cpp, std_flag, gpp, tl, ml, ol, list(self.pairs), parallel),
+            args=(cpp, std_flag, gpp, tl, ml, ol, self.pairs + self.manual_pairs, parallel),
             daemon=True
         ).start()
 
@@ -1454,6 +1596,7 @@ class JudgerApp:
                 "output_limit": self.output_limit.get(),
                 "std_var": self.std_var.get(),
                 "test_files": self.test_files,
+                "manual_pairs": self.manual_pairs,
                 "spj_enabled": self.spj_enabled.get(),
                 "spj_mode": self.spj_mode.get(),
                 "spj_path": self.spj_path.get(),
