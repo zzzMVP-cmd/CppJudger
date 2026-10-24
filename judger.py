@@ -467,6 +467,7 @@ THEMES = {
         "tag_header": "#89b4fa",
         "tag_info": "#a6adc8",
         "tag_muted": "#6c7086",
+        "insert_cursor": "#ffffff",
         "diff_delete": "#89b4fa",
         "diff_insert": "#f38ba8",
         "scrollbar_trough": "#313244",
@@ -497,6 +498,7 @@ THEMES = {
         "tag_header": "#89b4fa",
         "tag_info": "#a6adc8",
         "tag_muted": "#6c7086",
+        "insert_cursor": "#000000",
         "diff_delete": "#89b4fa",
         "diff_insert": "#f38ba8",
         "scrollbar_trough": "#f0f2f5",
@@ -693,6 +695,7 @@ class JudgerApp:
         self.spj_path = tk.StringVar(value=cfg.get("spj_path", ""))
 
         self.queue = queue.Queue()
+        self._tk_entries = []
         self.running = False
         self.work_dir = None
 
@@ -784,13 +787,15 @@ class JudgerApp:
               foreground=[("active", "white"), ("!active", "white")])
 
         s.configure("TEntry", padding=(8, 6), fieldbackground=c["card"], foreground=c["text_primary"],
-                    background=c["card"], bordercolor=c["border"], focuscolor=c["primary"])
+                    background=c["card"], bordercolor=c["border"], focuscolor=c["primary"],
+                    insertbackground=c["insert_cursor"])
         s.map("TEntry",
               fieldbackground=[("disabled", c["bg"])],
               foreground=[("disabled", c["text_secondary"])])
         s.configure("TCombobox", padding=(8, 6), fieldbackground=c["card"], foreground=c["text_primary"],
                     background=c["card"], bordercolor=c["border"], focuscolor=c["primary"],
-                    selectbackground=c["primary"], selectforeground="white")
+                    selectbackground=c["primary"], selectforeground="white",
+                    insertbackground=c["insert_cursor"])
         s.map("TCombobox",
               fieldbackground=[("readonly", c["card"]), ("disabled", c["bg"])],
               foreground=[("readonly", c["text_primary"]), ("disabled", c["text_secondary"])],
@@ -881,6 +886,19 @@ class JudgerApp:
             self.file_listbox.drop_target_register(DND_FILES)
             self.file_listbox.dnd_bind('<<Drop>>', self._on_drop_tests)
 
+    def _make_entry(self, parent, textvariable, font=("Consolas", 10), width=None):
+        c = self.c
+        e = tk.Entry(parent, textvariable=textvariable, font=font, relief="solid",
+                     borderwidth=1, highlightthickness=1,
+                     bg=c["card"], fg=c["text_primary"],
+                     insertbackground=c["insert_cursor"],
+                     selectbackground=c["primary"], selectforeground="white",
+                     highlightbackground=c["border"], highlightcolor=c["primary"])
+        if width:
+            e.config(width=width)
+        self._tk_entries.append(e)
+        return e
+
     def _build_option_card(self, parent):
         card, body, _ = self._card_frame(parent, "评测选项")
         card.pack(fill="x", pady=(0, 8))
@@ -890,7 +908,7 @@ class JudgerApp:
 
         for label_text, var, width in [("时间限制", self.time_limit, 8), ("空间限制", self.mem_limit, 8), ("输出上限", self.output_limit, 8)]:
             ttk.Label(row1, text=label_text, style="Card.TLabel").pack(side="left", padx=(0, 4))
-            ttk.Entry(row1, textvariable=var, width=width, font=("Consolas", 10)).pack(side="left", padx=(0, 4))
+            self._make_entry(row1, var, width=width).pack(side="left", padx=(0, 4))
             unit = "ms" if "时间" in label_text else "MB" if "空间" in label_text else "行"
             ttk.Label(row1, text=unit, style="CardDim.TLabel").pack(side="left", padx=(0, 20))
 
@@ -901,7 +919,7 @@ class JudgerApp:
         row2 = ttk.Frame(body, style="Card.TFrame")
         row2.pack(fill="x")
         ttk.Label(row2, text="编译器", style="Card.TLabel").pack(side="left", padx=(0, 4))
-        ttk.Entry(row2, textvariable=self.gpp_path, font=("Consolas", 9)).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._make_entry(row2, self.gpp_path, font=("Consolas", 9)).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ttk.Button(row2, text="浏览", style="Small.TButton", command=self.choose_gpp).pack(side="right")
 
         row3 = ttk.Frame(body, style="Card.TFrame")
@@ -917,7 +935,7 @@ class JudgerApp:
 
         self.spj_path_frame = ttk.Frame(row3, style="Card.TFrame")
         self.spj_path_frame.pack(side="left", fill="x", expand=True, padx=(0, 0))
-        self.spj_entry = ttk.Entry(self.spj_path_frame, textvariable=self.spj_path, font=("Consolas", 9))
+        self.spj_entry = self._make_entry(self.spj_path_frame, self.spj_path, font=("Consolas", 9))
         self.spj_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         ttk.Button(self.spj_path_frame, text="浏览", style="Small.TButton", command=self.choose_spj).pack(side="right")
 
@@ -1006,6 +1024,13 @@ class JudgerApp:
         c = self.c
         self.root.configure(bg=c["bg"])
         self._configure_styles()
+        for e in getattr(self, "_tk_entries", []):
+            try:
+                e.config(bg=c["card"], fg=c["text_primary"],
+                         insertbackground=c["insert_cursor"],
+                         highlightbackground=c["border"], highlightcolor=c["primary"])
+            except Exception:
+                pass
         self.sep_frame.configure(bg=c["border"])
         self.file_listbox.configure(
             bg=c["listbox_bg"], fg=c["listbox_fg"],
